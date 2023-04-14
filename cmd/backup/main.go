@@ -1,151 +1,119 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
+	"flag"
 	"log"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
-	"time"
+	"ydb-backup-tool/internal/btrfs"
+	cmd "ydb-backup-tool/internal/command"
+	"ydb-backup-tool/internal/dump"
 )
 
-type LoopDevicesObj struct {
-	Loopdevices []LoopDevice
+var (
+	ydbUrl  *string
+	ydbName *string
+)
+
+func init() {
+	ydbUrl = flag.String("ydb-url", "", "YDB url")
+	ydbName = flag.String("ydb-name", "", "YDB name")
 }
 
-type LoopDevice struct {
-	Name      string
-	Sizelimit int
-	Autoclear bool
-	Ro        bool
-	BackFile  string `json:"back-file"`
-	Dio       bool
-	LogSec    int `json:"log-sec"`
-}
+func parseAndValidateArgs() *cmd.Command {
+	// TODO: configuration through env
+	//dbUrl := os.Getenv("YDB_CONNECTION_URL")
+	//if dbUrl == "" {
+	//	log.Fatal("YDB_CONNECTION_URL is empty in env")
+	//}
+	//dbName := os.Getenv("YDB_DB_NAME")
+	//if dbName == "" {
+	//	log.Fatal("YDB_DB_NAME is empty in env")
+	//}
+	flag.Parse()
 
-const APP_PATH = "/var/lib/ydb-backup-tool/"
+	if strings.TrimSpace(*ydbUrl) == "" {
+		log.Fatal("You need to specify YDB url passing the following parameter: \"--ydb-url=<url>\"")
+	}
+	if strings.TrimSpace(*ydbName) == "" {
+		log.Fatal("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
+	}
+	if len(flag.Args()) == 0 {
+		log.Fatal("You need to pass command")
+	}
+
+	var command cmd.Command
+	switch strings.TrimSpace(flag.Arg(0)) {
+	case "ls":
+		command = cmd.ListAllBackups
+		break
+	case "create-full":
+		command = cmd.CreateFullBackup
+		break
+	case "create-inc":
+		command = cmd.CreateIncrementalBackup
+		break
+	default:
+		command = cmd.Undefined
+	}
+
+	if command == cmd.Undefined {
+		log.Fatal("Couldn't parse command")
+	}
+
+	return &command
+}
 
 func main() {
-	dbUrl := os.Getenv("YDB_CONNECTION_URL")
-	if dbUrl == "" {
-		log.Fatal("YDB_CONNECTION_URL is empty in env")
-	}
-	dbName := os.Getenv("YDB_DB_NAME")
-	if dbName == "" {
-		log.Fatal("YDB_DB_NAME is empty in env")
-	}
+	command := parseAndValidateArgs()
 
-	// Main logic
-	//mkdirPath, err := exec.LookPath("mkdir")
-	//if err != nil {
-	//	log.Fatal("mkdir is not found in %PATH%")
-	//}
-	//
-	//tempFolder := "tmp_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	//mkdirCmd := exec.Command(mkdirPath, tempFolder)
-	//if err := mkdirCmd.Run(); err != nil {
-	//	log.Fatal("Failed to create temporary directory")
-	//}
-
-	// TODO: add search is user's profile directory if running as sudo
-	ydbPath, err := exec.LookPath("ydb")
-	if err != nil {
-		log.Fatal("YDB CLI is not found in %PATH%")
-	}
-
-	// Perform full backup of YDB
-	targetFolder := "ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	ydbCmd := exec.Command(ydbPath, "-e", dbUrl, "-d", dbName, "tools", "dump", "-o", targetFolder)
-	if err := ydbCmd.Run(); err != nil {
-		log.Fatal("Error occurred during YDB backup process: ", err)
-	}
+	// TODO: check if running as sudo
 
 	// TODO: think about collisions for db names(different hosts)
-
+	btrfsFileName := strings.ReplaceAll(*ydbName, "/", "_") + ".img"
 	// Verify img file exists or create it in case of absence
-	btrfsFileName := strings.ReplaceAll(dbName, "/", "_") + ".img"
-	btrfsImgFilePath := APP_PATH + btrfsFileName
-	log.Print("btrfsFileName = " + btrfsImgFilePath)
-	if _, err = os.Stat(btrfsImgFilePath); err != nil {
-		createBtrfsFile(btrfsImgFilePath)
-	}
-
-	losetupPath, err := exec.LookPath("losetup")
+	btrfsImgFile, err := btrfs.GetOrCreateBtrfsImgFile(btrfsFileName)
 	if err != nil {
-		log.Fatal("`losetup` is not found in %PATH%")
+		log.Fatal("Cannot obtain btrfs image file. ", err)
 	}
-
-	losetupCmd := exec.Command(losetupPath, "-fP", btrfsImgFilePath)
-	if err := losetupCmd.Run(); err != nil {
-		log.Fatal("Error occurred during creation of loop device for img file = " + btrfsImgFilePath)
-	}
-
-	losetupDevicesCmd := exec.Command(losetupPath, "--json")
-	out, err := losetupDevicesCmd.Output()
+	btrfsMountPoint, err := btrfs.MountImgFile(btrfsImgFile)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Cannot mount btrfs image file. ", err)
 	}
-
-	var loopDeviceObj LoopDevicesObj
-	json.Unmarshal(out, &loopDeviceObj)
-
-	var btrfsLoopDevice *LoopDevice = nil
-	for _, d := range loopDeviceObj.Loopdevices {
-		if strings.EqualFold(d.BackFile, btrfsImgFilePath) {
-			btrfsLoopDevice = &d
-			break
+	defer func(mountPoint *btrfs.MountPoint) {
+		err := btrfs.UnmountImgFile(mountPoint)
+		if err != nil {
+			log.Printf("WARN: cannot unmount the image file.")
 		}
-	}
-	if btrfsLoopDevice == nil {
-		log.Fatal("Coulnd't find loop device")
-	}
+	}(btrfsMountPoint)
 
-	//mount / dev / l o o p 0 / mnt / b t r f s
-	mountPath, err := exec.LookPath("mount")
-	if err != nil {
-		log.Fatal("`mount` is not found in %PATH%")
-	}
-
-	btrfsMountPoint := APP_PATH + "/mnt"
-	createDirectory(btrfsMountPoint)
-
-	mountCmd := exec.Command(mountPath, btrfsLoopDevice.Name, btrfsMountPoint)
-	if err := mountCmd.Run(); err != nil {
-		log.Fatal("Error during mounting of loopdevice to btrfs folder = " + btrfsMountPoint)
-	}
-
-	fmt.Println("success")
-}
-
-func createBtrfsFile(fileName string) {
-	// Create directory for app data in case it doesn't exist
-	createDirectory(APP_PATH)
-
-	ddPath, err := exec.LookPath("dd")
-	if err != nil {
-		log.Fatal("`dd` is not found in %PATH%")
-	}
-	ddCmd := exec.Command(ddPath, "if=/dev/zero", "of="+fileName, "bs=1M", "count=1024")
-	if err := ddCmd.Run(); err != nil {
-		log.Fatal("Failed to create img file: " + fileName)
-	}
-
-	mkfsPath, err := exec.LookPath("mkfs.btrfs")
-	if err != nil {
-		log.Fatal("`mkfs.btrfs` is not found in %PATH%")
-	}
-	mkfsCmd := exec.Command(mkfsPath, fileName)
-	if err := mkfsCmd.Run(); err != nil {
-		log.Fatal("Failed to initialize btrfs in the file: " + fileName)
-	}
-}
-
-func createDirectory(dir string) {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			log.Fatal("Cannot create base directory for the app: " + dir)
+	switch *command {
+	case cmd.ListAllBackups:
+		err := command.ListBackups(btrfsMountPoint)
+		if err != nil {
+			log.Fatal("cannot list backups because of the following error: ", err)
 		}
+		break
+	case cmd.CreateFullBackup:
+		ydbParams := dump.YdbParams{DbUrl: ydbUrl, DbName: ydbName}
+		err := command.CreateFullBackup(btrfsMountPoint, &ydbParams)
+		if err != nil {
+			log.Fatal("cannot perform full backup because of the following error: ", err)
+		}
+		break
+	case cmd.CreateIncrementalBackup:
+		if len(flag.Args()) <= 1 {
+			if err := btrfs.UnmountImgFile(btrfsMountPoint); err != nil {
+				log.Printf("WARN: cannot unmount the image file.")
+			}
+			log.Fatal("You should specify base backup: create-inc <base_backup>")
+		}
+
+		baseBackup := flag.Arg(1)
+		ydbParams := dump.YdbParams{DbUrl: ydbUrl, DbName: ydbName}
+		err := command.CreateIncrementalBackup(btrfsMountPoint, &ydbParams, &baseBackup)
+		if err != nil {
+			log.Fatal("cannot perform incremental backup because of the following error: ", err)
+		}
+		break
 	}
 }
