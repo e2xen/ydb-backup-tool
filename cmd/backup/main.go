@@ -6,17 +6,37 @@ import (
 	"strings"
 	"ydb-backup-tool/internal/btrfs"
 	cmd "ydb-backup-tool/internal/command"
-	"ydb-backup-tool/internal/dump"
+	_const "ydb-backup-tool/internal/const"
+	"ydb-backup-tool/internal/ydb"
 )
 
 var (
-	ydbUrl  *string
-	ydbName *string
+	ydbEndpoint     *string
+	ydbName         *string
+	ydbYcTokenFile  *string
+	ydbIamTokenFile *string
+	ydbSaKeyFile    *string
+	ydbProfile      *string
 )
 
 func init() {
-	ydbUrl = flag.String("ydb-url", "", "YDB url")
-	ydbName = flag.String("ydb-name", "", "YDB name")
+	ydbEndpoint = flag.String(_const.YdbEndpointArg, "", "YDB endpoint")
+	ydbName = flag.String(_const.YdbNameArg, "", "YDB database name")
+	ydbYcTokenFile = flag.String(_const.YdbYcTokenFileArg, "", "YDB OAuth token file")
+	ydbIamTokenFile = flag.String(_const.YdbIamTokenFileArg, "", "YDB IAM token file")
+	ydbSaKeyFile = flag.String(_const.YdbSaKeyFileArg, "", "YDB Service Account Key file")
+	ydbProfile = flag.String(_const.YdbProfileArg, "", "YDB profile name")
+	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB flag of usage the metadata service")
+}
+
+func isArgFlagPassed(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 func parseAndValidateArgs() *cmd.Command {
@@ -31,8 +51,8 @@ func parseAndValidateArgs() *cmd.Command {
 	//}
 	flag.Parse()
 
-	if strings.TrimSpace(*ydbUrl) == "" {
-		log.Fatal("You need to specify YDB url passing the following parameter: \"--ydb-url=<url>\"")
+	if strings.TrimSpace(*ydbEndpoint) == "" {
+		log.Fatal("You need to specify YDB url passing the following parameter: \"--ydb-endpoint=<url>\"")
 	}
 	if strings.TrimSpace(*ydbName) == "" {
 		log.Fatal("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
@@ -66,9 +86,14 @@ func parseAndValidateArgs() *cmd.Command {
 func main() {
 	command := parseAndValidateArgs()
 
+	// TODO: add an optional param to name user's backups
+
 	// TODO: check if running as sudo
 
-	// TODO: think about collisions for db names(different hosts)
+	// TODO: add "--help" option
+	// TODO: add "--debug" option
+
+	// TODO: think about collisions for db names(different hosts) OR create only one .img file for all backups(for example, data.img)
 	btrfsFileName := strings.ReplaceAll(*ydbName, "/", "_") + ".img"
 	// Verify img file exists or create it in case of absence
 	btrfsImgFile, err := btrfs.GetOrCreateBtrfsImgFile(btrfsFileName)
@@ -79,8 +104,9 @@ func main() {
 	if err != nil {
 		log.Fatal("Cannot mount btrfs image file. ", err)
 	}
+	// TODO: there was a bug - it was not called sometimes in case of failure (after log.Fatal())
 	defer func(mountPoint *btrfs.MountPoint) {
-		err := btrfs.UnmountImgFile(mountPoint)
+		err := btrfs.Unmount(mountPoint)
 		if err != nil {
 			log.Printf("WARN: cannot unmount the image file.")
 		}
@@ -90,30 +116,45 @@ func main() {
 	case cmd.ListAllBackups:
 		err := command.ListBackups(btrfsMountPoint)
 		if err != nil {
-			log.Fatal("cannot list backups because of the following error: ", err)
+			log.Printf("cannot list backups because of the following error: %s", err)
+			return
 		}
 		break
 	case cmd.CreateFullBackup:
-		ydbParams := dump.YdbParams{DbUrl: ydbUrl, DbName: ydbName}
-		err := command.CreateFullBackup(btrfsMountPoint, &ydbParams)
+		ydbParams := initYdbParams()
+		err := command.CreateFullBackup(btrfsMountPoint, ydbParams)
 		if err != nil {
-			log.Fatal("cannot perform full backup because of the following error: ", err)
+			log.Printf("cannot perform full backup because of the following error: %s", err)
+			return
 		}
 		break
 	case cmd.CreateIncrementalBackup:
 		if len(flag.Args()) <= 1 {
-			if err := btrfs.UnmountImgFile(btrfsMountPoint); err != nil {
+			if err := btrfs.Unmount(btrfsMountPoint); err != nil {
 				log.Printf("WARN: cannot unmount the image file.")
 			}
-			log.Fatal("You should specify base backup: create-inc <base_backup>")
+			log.Printf("You should specify base backup: create-inc <base_backup>")
+			return
 		}
 
 		baseBackup := flag.Arg(1)
-		ydbParams := dump.YdbParams{DbUrl: ydbUrl, DbName: ydbName}
-		err := command.CreateIncrementalBackup(btrfsMountPoint, &ydbParams, &baseBackup)
+		ydbParams := initYdbParams()
+		err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams, baseBackup)
 		if err != nil {
-			log.Fatal("cannot perform incremental backup because of the following error: ", err)
+			log.Printf("cannot perform incremental backup because of the following error: %s", err)
+			return
 		}
 		break
+	}
+}
+
+func initYdbParams() *ydb.Params {
+	return &ydb.Params{Endpoint: *ydbEndpoint,
+		Name:             *ydbName,
+		YcTokenFile:      *ydbYcTokenFile,
+		IamTokenFile:     *ydbIamTokenFile,
+		SaKeyFile:        *ydbSaKeyFile,
+		Profile:          *ydbProfile,
+		UseMetadataCreds: isArgFlagPassed(_const.YdbUseMetadataCredsArg),
 	}
 }

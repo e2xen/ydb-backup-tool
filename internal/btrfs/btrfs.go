@@ -44,8 +44,11 @@ type Snapshot struct {
 }
 
 func GetOrCreateBtrfsImgFile(btrfsFileName string) (*ImgFile, error) {
+	if !strings.HasPrefix(btrfsFileName, "/") {
+		btrfsFileName = "/" + btrfsFileName
+	}
+
 	btrfsImgFilePath := _const.AppPath + btrfsFileName
-	log.Print("btrfsFileName = " + btrfsImgFilePath)
 	if _, err := os.Stat(btrfsImgFilePath); err != nil {
 		if err := createBtrfsFile(btrfsImgFilePath); err != nil {
 			return nil, err
@@ -58,9 +61,9 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 	// TODO: unmount device (in case it already exists)
 	// TODO: losetup in case device is added
 
-	losetupPath, err := exec.LookPath("losetup")
+	losetupPath, err := utils.GetBinary("losetup")
 	if err != nil {
-		return nil, fmt.Errorf("`losetup` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
 	// TODO: check it already exists
@@ -96,9 +99,9 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 		return nil, err
 	}
 
-	mountPath, err := exec.LookPath("mount")
+	mountPath, err := utils.GetBinary("mount")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
 	// TODO: umount in case the loop device was already mounted
@@ -113,21 +116,21 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 
 /* It will not work with recursive subvolumes */
 
-func CreateSubvolume(path *string) (*Subvolume, error) {
-	btrfsPath, err := exec.LookPath("btrfs")
+func CreateSubvolume(path string) (*Subvolume, error) {
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
-	btrfsCmd := exec.Command(btrfsPath, "subvolume", "create", *path)
+	btrfsCmd := exec.Command(btrfsPath, "subvolume", "create", path)
 	if err := btrfsCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to create subvolume: %s. Error: %w", *path, err)
+		return nil, fmt.Errorf("failed to create subvolume: %s. Error: %w", path, err)
 	}
 
-	return &Subvolume{*path}, nil
+	return &Subvolume{path}, nil
 }
 
-func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath *string) (*Snapshot, error) {
+func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath string) (*Snapshot, error) {
 	subvolumeExists, err := verifySubvolumeExists(subvolume)
 
 	if err != nil {
@@ -137,26 +140,26 @@ func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath *string) (*Snapshot
 		return nil, fmt.Errorf("cannot find subvolume: %s", err)
 	}
 
-	btrfsPath, err := exec.LookPath("btrfs")
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
-	btrfsCmd := exec.Command(btrfsPath, "subvolume", "snapshot", "-r", subvolume.Path, *snapshotTargetPath)
+	btrfsCmd := exec.Command(btrfsPath, "subvolume", "snapshot", "-r", subvolume.Path, snapshotTargetPath)
 	if err := btrfsCmd.Run(); err != nil {
-		return nil, fmt.Errorf("cannot create snapshot %s. Error: %w", *snapshotTargetPath, err)
+		return nil, fmt.Errorf("cannot create snapshot %s. Error: %w", snapshotTargetPath, err)
 	}
 
-	return &Snapshot{*snapshotTargetPath}, nil
+	return &Snapshot{snapshotTargetPath}, nil
 }
 
-func GetSubvolumes(path *string) ([]*Subvolume, error) {
-	btrfsPath, err := exec.LookPath("btrfs")
+func GetSubvolumes(path string) ([]*Subvolume, error) {
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
-	btrfsCmd := exec.Command(btrfsPath, "subvolume", "list", *path)
+	btrfsCmd := exec.Command(btrfsPath, "subvolume", "list", path)
 	out, err := btrfsCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
@@ -166,20 +169,20 @@ func GetSubvolumes(path *string) ([]*Subvolume, error) {
 	for _, subvolume := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(subvolume) != "" {
 			words := strings.Split(subvolume, " ")
-			path := *path + "/" + words[len(words)-1]
+			path := path + "/" + words[len(words)-1]
 			result = append(result, &Subvolume{path})
 		}
 	}
 	return result, nil
 }
 
-func GetSnapshots(path *string) ([]*Snapshot, error) {
-	btrfsPath, err := exec.LookPath("btrfs")
+func GetSnapshots(path string) ([]*Snapshot, error) {
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
-	btrfsCmd := exec.Command(btrfsPath, "subvolume", "list", "-r", *path)
+	btrfsCmd := exec.Command(btrfsPath, "subvolume", "list", "-r", path)
 	out, err := btrfsCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get list of snapshots. Error: %w", err)
@@ -189,22 +192,22 @@ func GetSnapshots(path *string) ([]*Snapshot, error) {
 	for _, subvolume := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(subvolume) != "" {
 			words := strings.Split(subvolume, " ")
-			path := *path + "/" + words[len(words)-1]
+			path := path + "/" + words[len(words)-1]
 			result = append(result, &Snapshot{path})
 		}
 	}
 	return result, nil
 }
 
-func GetSnapshot(path *string) (*Snapshot, error) {
-	dir := filepath.Dir(*path)
-	snapshots, err := GetSnapshots(&dir)
+func GetSnapshot(path string) (*Snapshot, error) {
+	dir := filepath.Dir(path)
+	snapshots, err := GetSnapshots(dir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get list of snapshots. Error: %w", err)
 	}
 
 	for _, snapshot := range snapshots {
-		if snapshot.Path == *path {
+		if snapshot.Path == path {
 			return snapshot, nil
 		}
 	}
@@ -212,17 +215,17 @@ func GetSnapshot(path *string) (*Snapshot, error) {
 	return nil, nil
 }
 
-func GetSubvolume(path *string) (*Subvolume, error) {
+func GetSubvolume(path string) (*Subvolume, error) {
 	// Extract dir
-	dir := filepath.Dir(*path)
+	dir := filepath.Dir(path)
 
-	subvolumes, err := GetSubvolumes(&dir)
+	subvolumes, err := GetSubvolumes(dir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}
 
 	for _, subvolume := range subvolumes {
-		if subvolume.Path == *path {
+		if subvolume.Path == path {
 			return subvolume, nil
 		}
 	}
@@ -231,9 +234,9 @@ func GetSubvolume(path *string) (*Subvolume, error) {
 }
 
 func DeleteSubvolume(subvolume *Subvolume) error {
-	btrfsPath, err := exec.LookPath("btrfs")
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return err
 	}
 
 	subvolumeExists, err := verifySubvolumeExists(subvolume)
@@ -256,10 +259,10 @@ func DeleteSnapshot(snapshot *Snapshot) error {
 	return DeleteSubvolume(&Subvolume{snapshot.Path})
 }
 
-func UnmountImgFile(mountPoint *MountPoint) error {
-	umountPath, err := exec.LookPath("umount")
+func Unmount(mountPoint *MountPoint) error {
+	umountPath, err := utils.GetBinary("umount")
 	if err != nil {
-		return fmt.Errorf("`umount` is not found in PATH. Error: %w", err)
+		return err
 	}
 
 	umountCmd := exec.Command(umountPath, mountPoint.Path)
@@ -271,16 +274,21 @@ func UnmountImgFile(mountPoint *MountPoint) error {
 }
 
 func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, target *Subvolume) (*Snapshot, error) {
-	//sudo btrfs send -p /.snapshot/home-day2 /.snapshot/home-day3 | sudo btrfs receive /run/media/user/mydisk/bk
-	btrfsPath, err := exec.LookPath("btrfs")
+	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
-		return nil, fmt.Errorf("`mount` is not found in PATH. Error: %w", err)
+		return nil, err
 	}
 
 	tempIncDiffFile := newSnapshot.Path + "_temp_diff"
-	if err := utils.CreateFile(&tempIncDiffFile); err != nil {
+	if err := utils.CreateFile(tempIncDiffFile); err != nil {
 		return nil, fmt.Errorf("failed to create temporary file %s to store diff", tempIncDiffFile)
 	}
+	defer func() {
+		// Delete file with temp diff
+		if err := utils.DeleteFile(tempIncDiffFile); err != nil {
+			log.Printf("WARIN: failed to delete file %s with incremental snapshot difference", tempIncDiffFile)
+		}
+	}()
 
 	btrfsCmdSend := exec.Command(btrfsPath, "send", "-p", prevSnapshot.Path, newSnapshot.Path, "-f", tempIncDiffFile)
 	if err := btrfsCmdSend.Run(); err != nil {
@@ -297,11 +305,6 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 		return nil, fmt.Errorf("cannot create incremental snapshot from the diff file %s", tempIncDiffFile)
 	}
 
-	// Delete file with temp diff
-	if err := utils.DeleteFile(&tempIncDiffFile); err != nil {
-		return nil, fmt.Errorf("failed to delete file %s with incremental snapshot difference", tempIncDiffFile)
-	}
-
 	return &Snapshot{newSnapshot.Path}, nil
 }
 
@@ -311,18 +314,18 @@ func createBtrfsFile(fileName string) error {
 		return err
 	}
 
-	ddPath, err := exec.LookPath("dd")
+	ddPath, err := utils.GetBinary("dd")
 	if err != nil {
-		return errors.New("`dd` is not found in %PATH%")
+		return err
 	}
 	ddCmd := exec.Command(ddPath, "if=/dev/zero", "of="+fileName, "bs=1M", "count=1024")
 	if err := ddCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create img file: %s. Error: %w", fileName, err)
 	}
 
-	mkfsPath, err := exec.LookPath("mkfs.btrfs")
+	mkfsPath, err := utils.GetBinary("mkfs.btrfs")
 	if err != nil {
-		return errors.New("`mkfs.btrfs` is not found in %PATH%")
+		return err
 	}
 	mkfsCmd := exec.Command(mkfsPath, fileName)
 	if err := mkfsCmd.Run(); err != nil {
@@ -335,7 +338,7 @@ func createBtrfsFile(fileName string) error {
 func verifySubvolumeExists(subvolume *Subvolume) (bool, error) {
 	dir := filepath.Dir(subvolume.Path)
 
-	subvolumes, err := GetSubvolumes(&dir)
+	subvolumes, err := GetSubvolumes(dir)
 	if err != nil {
 		return false, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}

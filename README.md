@@ -37,11 +37,22 @@ ydb -p dockerdb yql -s "select * from t1"
 
 * Perform backup of the database
 ```bash 
-ydb -p dockerdb tools dump
+ydb -p dockerdb tools ydb
 ```
 
-### Creating some tables in YDB
+### Tool
 
+* List all backups
 ```bash 
+--ydb-endpoint=grpc://localhost:2136 --ydb-name=/local ls
+```
 
+* Create full backup
+```bash 
+--ydb-endpoint=grpc://localhost:2136 --ydb-name=/local create-full 
+```
+
+* Create incremental backup
+```bash 
+--ydb-endpoint=grpc://localhost:2136 --ydb-name=/local create-inc <base_backup_name>
 ```
