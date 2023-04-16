@@ -29,27 +29,30 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 
 	// TODO: verify YDB connection(for example, discovery whoami). However, discovery works only with --yc-token-file
 
-	// Perform full backup of YDB
-	var ydbCmd *exec.Cmd
-	// TODO: verify correct priority if multiple auth methods are passed
-	// TODO: possible to refactor using vararg array
+	args := []string{"-e", params.Endpoint, "-d", params.Name}
 	if params.YcTokenFile != "" {
 		// TODO: maybe check that params.YcTokenFile exists
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "--yc-token-file", params.YcTokenFile, "tools", "dump", "-o", path)
-	} else if params.IamTokenFile != "" {
-		// TODO: maybe check that params.IamTokenFile exiSsts
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "--iam-token-file", params.IamTokenFile, "tools", "dump", "-o", path)
-	} else if params.SaKeyFile != "" {
-		// TODO: maybe check that params.SaKeyFile exists
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "--sa-key-file", params.SaKeyFile, "tools", "dump", "-o", path)
-	} else if params.Profile != "" {
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "-p", params.Profile, "tools", "dump", "-o", path)
-	} else if params.UseMetadataCreds {
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "--use-metadata-credentials", "tools", "dump", "-o", path)
-	} else {
-		ydbCmd = exec.Command(ydbPath, "-e", params.Endpoint, "-d", params.Name, "tools", "dump", "-o", path)
+		args = append(args, "--yc-token-file", params.YcTokenFile)
 	}
+	if params.IamTokenFile != "" {
+		// TODO: maybe check that params.IamTokenFile exists
+		args = append(args, "--iam-token-file", params.IamTokenFile)
+	}
+	if params.SaKeyFile != "" {
+		// TODO: maybe check that params.SaKeyFile exists
+		args = append(args, "--sa-key-file", params.SaKeyFile)
+	}
+	if params.Profile != "" {
+		args = append(args, "-p", params.Profile)
+	}
+	if params.UseMetadataCreds {
+		args = append(args, "--use-metadata-credentials")
+	}
+	args = append(args, "tools", "dump", "-o", path)
 
+	// Perform full backup of YDB
+	ydbCmd := exec.Command(ydbPath, args...)
+	println(ydbCmd.String())
 	if err := ydbCmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to perform YDB dump")
 	}

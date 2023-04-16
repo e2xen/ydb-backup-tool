@@ -26,7 +26,7 @@ func init() {
 	ydbIamTokenFile = flag.String(_const.YdbIamTokenFileArg, "", "YDB IAM token file")
 	ydbSaKeyFile = flag.String(_const.YdbSaKeyFileArg, "", "YDB Service Account Key file")
 	ydbProfile = flag.String(_const.YdbProfileArg, "", "YDB profile name")
-	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB flag of usage the metadata service")
+	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB use the metadata service")
 }
 
 func isArgFlagPassed(name string) bool {
