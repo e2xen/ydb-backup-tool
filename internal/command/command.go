@@ -18,6 +18,7 @@ const (
 	ListAllBackups
 	CreateFullBackup
 	CreateIncrementalBackup
+	RestoreFromBackup
 )
 
 func (command *Command) ListBackups(mountPoint *btrfs.MountPoint) error {
@@ -44,7 +45,7 @@ func (command *Command) CreateFullBackup(mountPoint *btrfs.MountPoint, ydbParams
 	}
 
 	targetPath := snapshotsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	snapshot, err := createFullBackupSnapshot(targetPath, ydbParams)
+	snapshot, err := createFullBackupSnapshot(ydbParams, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
@@ -78,7 +79,7 @@ func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, yd
 	}
 
 	targetPath := snapshotsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	snapshotNew, err := createFullBackupSnapshot(targetPath, ydbParams)
+	snapshotNew, err := createFullBackupSnapshot(ydbParams, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
@@ -97,7 +98,33 @@ func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, yd
 	return nil
 }
 
-func createFullBackupSnapshot(targetPath string, ydbParams *ydb.Params) (*btrfs.Snapshot, error) {
+func (command *Command) RestoreFromBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params, sourcePath string) error {
+	finalSourcePath := strings.TrimSpace(sourcePath)
+	if !strings.HasPrefix(finalSourcePath, "/") {
+		finalSourcePath = "/" + finalSourcePath
+	}
+	if !strings.HasPrefix(finalSourcePath, _const.AppSnapshotsFolderPath) {
+		finalSourcePath = _const.AppSnapshotsFolderPath + finalSourcePath
+	}
+
+	snapshotExists, err := verifySnapshotExists(finalSourcePath)
+	if err != nil {
+		return fmt.Errorf("cannot obtain info about backup `%s`", sourcePath)
+	}
+	if !snapshotExists {
+		return fmt.Errorf("cannot find backup: %s", sourcePath)
+	}
+
+	if err := ydb.Restore(ydbParams, finalSourcePath); err != nil {
+		return fmt.Errorf("failed to restore from the backup `%s`: %w", sourcePath, err)
+	}
+
+	log.Printf("Successfully restored from the backup `%s`!", sourcePath)
+
+	return nil
+}
+
+func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.Snapshot, error) {
 	// Create temp subvolume
 	subvolumeName := targetPath + "_temp_subvol"
 	subvolume, err := btrfs.CreateSubvolume(subvolumeName)

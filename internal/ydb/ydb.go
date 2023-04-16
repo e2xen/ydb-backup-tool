@@ -27,9 +27,41 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 		return nil, err
 	}
 
-	// TODO: verify YDB connection(for example, discovery whoami). However, discovery works only with --yc-token-file
+	// TODO: verify YDB connection(for example, discovery whoami). However, discovery works only with token creds
+	args := []string{"-e", params.Endpoint, "-d", params.Name}
+	args = addAuthParams(params, args)
+	args = append(args, "tools", "dump", "-o", path)
+
+	// Perform full backup of YDB
+	ydbCmd := exec.Command(ydbPath, args...)
+	if err := ydbCmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to perform YDB dump")
+	}
+
+	return &BackupInfo{Path: path}, nil
+}
+
+func Restore(params *Params, sourcePath string) error {
+	// TODO: add search of binary is user's profile directory if running as sudo
+	ydbPath, err := utils.GetBinary("ydb")
+	if err != nil {
+		return err
+	}
 
 	args := []string{"-e", params.Endpoint, "-d", params.Name}
+	args = addAuthParams(params, args)
+	args = append(args, "tools", "restore", "-p", ".", "-i", sourcePath)
+
+	// Perform restore of YDB
+	ydbCmd := exec.Command(ydbPath, args...)
+	if err := ydbCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restore YDB from the backup `%s`", sourcePath)
+	}
+
+	return nil
+}
+
+func addAuthParams(params *Params, args []string) []string {
 	if params.YcTokenFile != "" {
 		// TODO: maybe check that params.YcTokenFile exists
 		args = append(args, "--yc-token-file", params.YcTokenFile)
@@ -48,14 +80,5 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 	if params.UseMetadataCreds {
 		args = append(args, "--use-metadata-credentials")
 	}
-	args = append(args, "tools", "dump", "-o", path)
-
-	// Perform full backup of YDB
-	ydbCmd := exec.Command(ydbPath, args...)
-	println(ydbCmd.String())
-	if err := ydbCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to perform YDB dump")
-	}
-
-	return &BackupInfo{Path: path}, nil
+	return args
 }

@@ -72,6 +72,9 @@ func parseAndValidateArgs() *cmd.Command {
 	case "create-inc":
 		command = cmd.CreateIncrementalBackup
 		break
+	case "restore":
+		command = cmd.RestoreFromBackup
+		break
 	default:
 		command = cmd.Undefined
 	}
@@ -104,7 +107,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Cannot mount btrfs image file. ", err)
 	}
-	// TODO: there was a bug - it was not called sometimes in case of failure (after log.Fatal())
 	defer func(mountPoint *btrfs.MountPoint) {
 		err := btrfs.Unmount(mountPoint)
 		if err != nil {
@@ -122,26 +124,34 @@ func main() {
 		break
 	case cmd.CreateFullBackup:
 		ydbParams := initYdbParams()
-		err := command.CreateFullBackup(btrfsMountPoint, ydbParams)
-		if err != nil {
+		if err := command.CreateFullBackup(btrfsMountPoint, ydbParams); err != nil {
 			log.Printf("cannot perform full backup because of the following error: %s", err)
 			return
 		}
 		break
 	case cmd.CreateIncrementalBackup:
 		if len(flag.Args()) <= 1 {
-			if err := btrfs.Unmount(btrfsMountPoint); err != nil {
-				log.Printf("WARN: cannot unmount the image file.")
-			}
 			log.Printf("You should specify base backup: create-inc <base_backup>")
 			return
 		}
 
 		baseBackup := flag.Arg(1)
 		ydbParams := initYdbParams()
-		err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams, baseBackup)
-		if err != nil {
-			log.Printf("cannot perform incremental backup because of the following error: %s", err)
+		if err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams, baseBackup); err != nil {
+			log.Printf("cannot perform incremental backup. Error: %s", err)
+			return
+		}
+		break
+	case cmd.RestoreFromBackup:
+		if len(flag.Args()) <= 1 {
+			log.Printf("You should specify backup name: restore <name>")
+			return
+		}
+
+		sourcePath := flag.Arg(1)
+		ydbParams := initYdbParams()
+		if err := command.RestoreFromBackup(btrfsMountPoint, ydbParams, sourcePath); err != nil {
+			log.Printf("cannot restore from the backup. Error: %s", err)
 			return
 		}
 		break
