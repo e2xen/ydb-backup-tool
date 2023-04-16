@@ -48,7 +48,7 @@ func GetOrCreateBtrfsImgFile(btrfsFileName string) (*ImgFile, error) {
 		btrfsFileName = "/" + btrfsFileName
 	}
 
-	btrfsImgFilePath := _const.AppPath + btrfsFileName
+	btrfsImgFilePath := _const.AppDataPath + btrfsFileName
 	if _, err := os.Stat(btrfsImgFilePath); err != nil {
 		if err := createBtrfsFile(btrfsImgFilePath); err != nil {
 			return nil, err
@@ -94,7 +94,7 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 		return nil, errors.New("cannot find loop device")
 	}
 
-	btrfsMountPoint := _const.AppMountPath
+	btrfsMountPoint := _const.AppDataMountPath
 	if err := utils.CreateDirectory(btrfsMountPoint); err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 
 func createBtrfsFile(fileName string) error {
 	// Create directory for app data in case it doesn't exist
-	if err := utils.CreateDirectory(_const.AppPath); err != nil {
+	if err := utils.CreateDirectory(_const.AppDataPath); err != nil {
 		return err
 	}
 

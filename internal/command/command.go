@@ -32,6 +32,10 @@ func (command *Command) ListBackups(mountPoint *btrfs.MountPoint) error {
 		return fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}
 
+	if len(subvolumes) == 0 {
+		log.Printf("Currently, there is no backups")
+	}
+
 	for i, subvolume := range subvolumes {
 		log.Printf("%d %s\n", i, subvolume.Path)
 	}

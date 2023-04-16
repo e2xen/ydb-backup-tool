@@ -64,6 +64,7 @@ func parseAndValidateArgs() *cmd.Command {
 	var command cmd.Command
 	switch strings.TrimSpace(flag.Arg(0)) {
 	case "ls":
+	case "list":
 		command = cmd.ListAllBackups
 		break
 	case "create-full":
@@ -96,8 +97,8 @@ func main() {
 	// TODO: add "--help" option
 	// TODO: add "--debug" option
 
-	// TODO: think about collisions for db names(different hosts) OR create only one .img file for all backups(for example, data.img)
-	btrfsFileName := strings.ReplaceAll(*ydbName, "/", "_") + ".img"
+	// TODO: is is ok that we have only one .img file for all backups(for example, data.img)? Allow users to specify base filename through args?
+	btrfsFileName := _const.AppBaseDataImgName
 	// Verify img file exists or create it in case of absence
 	btrfsImgFile, err := btrfs.GetOrCreateBtrfsImgFile(btrfsFileName)
 	if err != nil {

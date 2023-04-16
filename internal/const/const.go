@@ -8,7 +8,8 @@ const YdbSaKeyFileArg = "ydb-sa-key-file"
 const YdbProfileArg = "ydb-p"
 const YdbUseMetadataCredsArg = "ydb-use-metadata-credentials"
 
-const AppPath = "/var/lib/ydb-backup-tool"
-const AppMountPath = AppPath + "/mnt"
+const AppBaseDataImgName = "data.img"
+const AppDataPath = "/var/lib/ydb-backup-tool"
+const AppDataMountPath = AppDataPath + "/mnt"
 const AppSnapshotsFolderName = "snapshots"
-const AppSnapshotsFolderPath = AppMountPath + "/" + AppSnapshotsFolderName
+const AppSnapshotsFolderPath = AppDataMountPath + "/" + AppSnapshotsFolderName
