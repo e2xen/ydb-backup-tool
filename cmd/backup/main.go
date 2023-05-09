@@ -41,30 +41,21 @@ func isArgFlagPassed(name string) bool {
 
 func parseAndValidateArgs() *cmd.Command {
 	// TODO: configuration through env
-	//dbUrl := os.Getenv("YDB_CONNECTION_URL")
-	//if dbUrl == "" {
-	//	log.Fatal("YDB_CONNECTION_URL is empty in env")
-	//}
-	//dbName := os.Getenv("YDB_DB_NAME")
-	//if dbName == "" {
-	//	log.Fatal("YDB_DB_NAME is empty in env")
-	//}
 	flag.Parse()
 
 	if strings.TrimSpace(*ydbEndpoint) == "" {
-		log.Fatal("You need to specify YDB url passing the following parameter: \"--ydb-endpoint=<url>\"")
+		log.Panic("You need to specify YDB url passing the following parameter: \"--ydb-endpoint=<url>\"")
 	}
 	if strings.TrimSpace(*ydbName) == "" {
-		log.Fatal("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
+		log.Panic("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
 	}
 	if len(flag.Args()) == 0 {
-		log.Fatal("You need to pass command")
+		log.Panic("You need to pass command")
 	}
 
 	var command cmd.Command
 	switch strings.TrimSpace(flag.Arg(0)) {
-	case "ls":
-	case "list":
+	case "ls", "list":
 		command = cmd.ListAllBackups
 		break
 	case "create-full":
@@ -81,7 +72,7 @@ func parseAndValidateArgs() *cmd.Command {
 	}
 
 	if command == cmd.Undefined {
-		log.Fatal("Couldn't parse command")
+		log.Panicf("Could not parse command")
 	}
 
 	return &command
@@ -90,7 +81,7 @@ func parseAndValidateArgs() *cmd.Command {
 func main() {
 	command := parseAndValidateArgs()
 
-	// TODO: add an optional param to name user's backups
+	// TODO: add an optional param to name user's backups. Do we need it?
 
 	// TODO: check if running as sudo
 
@@ -102,11 +93,23 @@ func main() {
 	// Verify img file exists or create it in case of absence
 	btrfsImgFile, err := btrfs.GetOrCreateBtrfsImgFile(btrfsFileName)
 	if err != nil {
-		log.Fatal("Cannot obtain btrfs image file. ", err)
+		log.Panicf("Cannot obtain btrfs image file. %v", err)
 	}
-	btrfsMountPoint, err := btrfs.MountImgFile(btrfsImgFile)
+
+	btrfsLoopDev, err := btrfs.SetupLoopDevice(btrfsImgFile)
 	if err != nil {
-		log.Fatal("Cannot mount btrfs image file. ", err)
+		log.Panicf("Cannot create loop device. %v", err)
+	}
+	defer func(loopDevice *btrfs.LoopDevice) {
+		err := btrfs.DetachLoopDevice(loopDevice)
+		if err != nil {
+			log.Panicf("WARN: cannot detach the loop device.")
+		}
+	}(btrfsLoopDev)
+
+	btrfsMountPoint, err := btrfs.MountLoopDevice(btrfsLoopDev)
+	if err != nil {
+		log.Panicf("Cannot mount btrfs image file. %v", err)
 	}
 	defer func(mountPoint *btrfs.MountPoint) {
 		err := btrfs.Unmount(mountPoint)
@@ -119,41 +122,35 @@ func main() {
 	case cmd.ListAllBackups:
 		err := command.ListBackups(btrfsMountPoint)
 		if err != nil {
-			log.Printf("cannot list backups because of the following error: %s", err)
-			return
+			log.Panicf("Cannot list backups because of the following error: %v", err)
 		}
 		break
 	case cmd.CreateFullBackup:
 		ydbParams := initYdbParams()
 		if err := command.CreateFullBackup(btrfsMountPoint, ydbParams); err != nil {
-			log.Printf("cannot perform full backup because of the following error: %s", err)
-			return
+			log.Panicf("Cannot perform full backup: %v", err)
 		}
 		break
 	case cmd.CreateIncrementalBackup:
 		if len(flag.Args()) <= 1 {
-			log.Printf("You should specify base backup: create-inc <base_backup>")
-			return
+			log.Panicf("You should specify base backup: create-inc <base_backup>")
 		}
 
 		baseBackup := flag.Arg(1)
 		ydbParams := initYdbParams()
 		if err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams, baseBackup); err != nil {
-			log.Printf("cannot perform incremental backup. Error: %s", err)
-			return
+			log.Panicf("Cannot perform incremental backup: %v", err)
 		}
 		break
 	case cmd.RestoreFromBackup:
 		if len(flag.Args()) <= 1 {
-			log.Printf("You should specify backup name: restore <name>")
-			return
+			log.Panic("You should specify backup name: restore <name>")
 		}
 
 		sourcePath := flag.Arg(1)
 		ydbParams := initYdbParams()
 		if err := command.RestoreFromBackup(btrfsMountPoint, ydbParams, sourcePath); err != nil {
-			log.Printf("cannot restore from the backup. Error: %s", err)
-			return
+			log.Panicf("Cannot restore from the backup: %v", err)
 		}
 		break
 	}

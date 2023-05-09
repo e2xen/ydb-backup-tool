@@ -57,16 +57,15 @@ func GetOrCreateBtrfsImgFile(btrfsFileName string) (*ImgFile, error) {
 	return &ImgFile{btrfsImgFilePath}, nil
 }
 
-func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
+func SetupLoopDevice(imgFile *ImgFile) (*LoopDevice, error) {
 	// TODO: unmount device (in case it already exists)
-	// TODO: losetup in case device is added
 
 	losetupPath, err := utils.GetBinary("losetup")
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: check it already exists
+	// TODO: check it already exists (or detach)
 	losetupCmd := exec.Command(losetupPath, "-fP", imgFile.Path)
 	if err := losetupCmd.Run(); err != nil {
 		return nil, fmt.Errorf("cannot create loop device with img file = %s. Error: %w", imgFile.Path, err)
@@ -94,6 +93,24 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 		return nil, errors.New("cannot find loop device")
 	}
 
+	return btrfsLoopDevice, nil
+}
+
+func DetachLoopDevice(device *LoopDevice) error {
+	losetupPath, err := utils.GetBinary("losetup")
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(losetupPath, "-d", device.Name)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cannot detach loop device %s", device.Name)
+	}
+
+	return nil
+}
+
+func MountLoopDevice(loopDevice *LoopDevice) (*MountPoint, error) {
 	btrfsMountPoint := _const.AppDataMountPath
 	if err := utils.CreateDirectory(btrfsMountPoint); err != nil {
 		return nil, err
@@ -106,7 +123,7 @@ func MountImgFile(imgFile *ImgFile) (*MountPoint, error) {
 
 	// TODO: umount in case the loop device was already mounted
 
-	mountCmd := exec.Command(mountPath, btrfsLoopDevice.Name, btrfsMountPoint)
+	mountCmd := exec.Command(mountPath, loopDevice.Name, btrfsMountPoint)
 	if err := mountCmd.Run(); err != nil {
 		return nil, fmt.Errorf("cannot mount loopdevice to btrfs folder = %s. Error: %w", btrfsMountPoint, err)
 	}
@@ -291,6 +308,7 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 	}()
 
 	btrfsCmdSend := exec.Command(btrfsPath, "send", "-p", prevSnapshot.Path, newSnapshot.Path, "-f", tempIncDiffFile)
+	fmt.Println(btrfsCmdSend.String())
 	if err := btrfsCmdSend.Run(); err != nil {
 		return nil, fmt.Errorf("cannot create incremental snapshot given %s and %s", prevSnapshot.Path, newSnapshot.Path)
 	}
@@ -301,6 +319,7 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 	}
 
 	btrfsCmdReceive := exec.Command(btrfsPath, "receive", "-f", tempIncDiffFile, target.Path)
+	fmt.Println(btrfsCmdReceive.String())
 	if err := btrfsCmdReceive.Run(); err != nil {
 		return nil, fmt.Errorf("cannot create incremental snapshot from the diff file %s", tempIncDiffFile)
 	}
