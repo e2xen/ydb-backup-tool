@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/utils"
 )
@@ -36,11 +39,26 @@ type MountPoint struct {
 }
 
 type Subvolume struct {
-	Path string
+	Path       string
+	Name       string
+	IsSnapshot bool
 }
 
-type Snapshot struct {
-	Path string
+type SubvolumeMeta struct {
+	Base           Subvolume
+	Id             uint64
+	CreatedAt      time.Time
+	SizeExclusive  uint64
+	SizeReferenced uint64
+}
+
+func NewSubvolume(path string, isSnapshot bool) *Subvolume {
+	pathSplit := strings.Split(path, "/")
+	return &Subvolume{Path: path, Name: pathSplit[len(pathSplit)-1], IsSnapshot: isSnapshot}
+}
+
+func NewSnapshot(path string) *Subvolume {
+	return NewSubvolume(path, true)
 }
 
 func GetOrCreateBtrfsImgFile(btrfsFileName string) (*ImgFile, error) {
@@ -132,7 +150,6 @@ func MountLoopDevice(loopDevice *LoopDevice) (*MountPoint, error) {
 }
 
 /* It will not work with recursive subvolumes */
-
 func CreateSubvolume(path string) (*Subvolume, error) {
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
@@ -144,10 +161,10 @@ func CreateSubvolume(path string) (*Subvolume, error) {
 		return nil, fmt.Errorf("failed to create subvolume: %s. Error: %w", path, err)
 	}
 
-	return &Subvolume{path}, nil
+	return NewSubvolume(path, false), nil
 }
 
-func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath string) (*Snapshot, error) {
+func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath string) (*Subvolume, error) {
 	subvolumeExists, err := verifySubvolumeExists(subvolume)
 
 	if err != nil {
@@ -167,33 +184,44 @@ func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath string) (*Snapshot,
 		return nil, fmt.Errorf("cannot create snapshot %s. Error: %w", snapshotTargetPath, err)
 	}
 
-	return &Snapshot{snapshotTargetPath}, nil
+	return NewSnapshot(snapshotTargetPath), nil
 }
 
+/*
+* Returns the list of subvolumes (including snapshots)
+ */
 func GetSubvolumes(path string) ([]*Subvolume, error) {
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
 		return nil, err
 	}
 
+	// Firstly, get snapshots
+	result, err := GetSnapshots(path)
+	if err != nil {
+		return nil, err
+	}
 	btrfsCmd := exec.Command(btrfsPath, "subvolume", "list", path)
 	out, err := btrfsCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}
 
-	result := []*Subvolume{}
 	for _, subvolume := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(subvolume) != "" {
 			words := strings.Split(subvolume, " ")
 			path := path + "/" + words[len(words)-1]
-			result = append(result, &Subvolume{path})
+
+			// If the subvolume is already in the list, then it is a snapshot - ignore it in the loop
+			if !slices.Contains(result, NewSnapshot(path)) {
+				result = append(result, NewSubvolume(path, false))
+			}
 		}
 	}
 	return result, nil
 }
 
-func GetSnapshots(path string) ([]*Snapshot, error) {
+func GetSnapshots(path string) ([]*Subvolume, error) {
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
 		return nil, err
@@ -205,18 +233,18 @@ func GetSnapshots(path string) ([]*Snapshot, error) {
 		return nil, fmt.Errorf("cannot get list of snapshots. Error: %w", err)
 	}
 
-	result := []*Snapshot{}
+	result := []*Subvolume{}
 	for _, subvolume := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(subvolume) != "" {
 			words := strings.Split(subvolume, " ")
 			path := path + "/" + words[len(words)-1]
-			result = append(result, &Snapshot{path})
+			result = append(result, NewSnapshot(path))
 		}
 	}
 	return result, nil
 }
 
-func GetSnapshot(path string) (*Snapshot, error) {
+func GetSnapshot(path string) (*Subvolume, error) {
 	dir := filepath.Dir(path)
 	snapshots, err := GetSnapshots(dir)
 	if err != nil {
@@ -272,8 +300,46 @@ func DeleteSubvolume(subvolume *Subvolume) error {
 	return nil
 }
 
-func DeleteSnapshot(snapshot *Snapshot) error {
-	return DeleteSubvolume(&Subvolume{snapshot.Path})
+func GetSnapshotsMeta(path string) (*[]SubvolumeMeta, error) {
+	snapshots, err := GetSnapshots(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := quotaGroupEnable(path); err != nil {
+		return nil, fmt.Errorf("failed to enable quota group for the given path: %s", path)
+	}
+
+	btrfsPath, err := utils.GetBinary("btrfs")
+	if err != nil {
+		return nil, err
+	}
+
+	var result []SubvolumeMeta
+
+	for _, snapshot := range snapshots {
+		cmd := exec.Command(btrfsPath, "subvolume", "show", "-b", snapshot.Path)
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get meta information about the following snapshot: %s", snapshot.Path)
+		}
+
+		subvolumeMeta, err := extractSubvolumeMetaInfo(string(out), NewSnapshot(snapshot.Path))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *subvolumeMeta)
+	}
+
+	return &result, nil
+}
+
+func DeleteSnapshot(subvolume *Subvolume) error {
+	if !subvolume.IsSnapshot {
+		panic("cannot delete snapshot, since subvolume provided")
+	}
+
+	return DeleteSubvolume(subvolume)
 }
 
 func Unmount(mountPoint *MountPoint) error {
@@ -290,7 +356,14 @@ func Unmount(mountPoint *MountPoint) error {
 	return nil
 }
 
-func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, target *Subvolume) (*Snapshot, error) {
+func CreateIncrementalSnapshot(prevSnapshot *Subvolume, newSnapshot *Subvolume, target *Subvolume) (*Subvolume, error) {
+	if !prevSnapshot.IsSnapshot {
+		panic("wrong argument provided, since prevSnapshot is not a snapshot")
+	}
+	if !newSnapshot.IsSnapshot {
+		panic("wrong argument provided, since newSnapshot is not a snapshot")
+	}
+
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
 		return nil, err
@@ -308,7 +381,6 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 	}()
 
 	btrfsCmdSend := exec.Command(btrfsPath, "send", "-p", prevSnapshot.Path, newSnapshot.Path, "-f", tempIncDiffFile)
-	fmt.Println(btrfsCmdSend.String())
 	if err := btrfsCmdSend.Run(); err != nil {
 		return nil, fmt.Errorf("cannot create incremental snapshot given %s and %s", prevSnapshot.Path, newSnapshot.Path)
 	}
@@ -319,12 +391,11 @@ func CreateIncrementalSnapshot(prevSnapshot *Snapshot, newSnapshot *Snapshot, ta
 	}
 
 	btrfsCmdReceive := exec.Command(btrfsPath, "receive", "-f", tempIncDiffFile, target.Path)
-	fmt.Println(btrfsCmdReceive.String())
 	if err := btrfsCmdReceive.Run(); err != nil {
 		return nil, fmt.Errorf("cannot create incremental snapshot from the diff file %s", tempIncDiffFile)
 	}
 
-	return &Snapshot{newSnapshot.Path}, nil
+	return NewSnapshot(newSnapshot.Path), nil
 }
 
 func createBtrfsFile(fileName string) error {
@@ -369,4 +440,56 @@ func verifySubvolumeExists(subvolume *Subvolume) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func quotaGroupEnable(path string) error {
+	btrfsPath, err := utils.GetBinary("btrfs")
+	if err != nil {
+		return err
+	}
+
+	btrfsCmd := exec.Command(btrfsPath, "quota", "enable", path)
+	if err := btrfsCmd.Run(); err != nil {
+		return fmt.Errorf("failed to enable quotas for the path %s", path)
+	}
+
+	return nil
+}
+
+func extractSubvolumeMetaInfo(text string, baseSubvolume *Subvolume) (*SubvolumeMeta, error) {
+	metaMap := make(map[string]string)
+
+	for _, line := range strings.Split(text, "\n") {
+		cuttingByDelimiter := strings.SplitN(line, ":", 2)
+
+		if len(cuttingByDelimiter) == 2 {
+			key := strings.ToLower(strings.TrimSpace(cuttingByDelimiter[0]))
+			value := strings.TrimSpace(cuttingByDelimiter[1])
+			metaMap[key] = value
+		}
+	}
+
+	id, err := strconv.ParseUint(metaMap["subvolume id"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse parameter `subvolume id` for the following subvolume %s",
+			baseSubvolume.Path)
+	}
+	createdAt, err := time.Parse("2006-01-02 15:04:05 -0700", metaMap["creation time"])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse parameter `creation time` for the following subvolume %s",
+			baseSubvolume.Path)
+	}
+	sizeExclusive, err := strconv.ParseUint(metaMap["usage exclusive"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse parameter `usage exclusive` for the following subvolume %s",
+			baseSubvolume.Path)
+	}
+	sizeReferenced, err := strconv.ParseUint(metaMap["usage referenced"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse parameter `usage referenced` for the following subvolume %s",
+			baseSubvolume.Path)
+	}
+
+	return &SubvolumeMeta{Base: *baseSubvolume, Id: id, CreatedAt: createdAt, SizeExclusive: sizeExclusive,
+		SizeReferenced: sizeReferenced}, nil
 }

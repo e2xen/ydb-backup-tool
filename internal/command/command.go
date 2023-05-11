@@ -3,8 +3,11 @@ package command
 import (
 	"fmt"
 	"log"
+	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 	"ydb-backup-tool/internal/btrfs"
 	_const "ydb-backup-tool/internal/const"
@@ -16,6 +19,7 @@ type Command int64
 const (
 	Undefined Command = iota
 	ListAllBackups
+	ListAllBackupsSizes
 	CreateFullBackup
 	CreateIncrementalBackup
 	RestoreFromBackup
@@ -38,6 +42,38 @@ func (command *Command) ListBackups(mountPoint *btrfs.MountPoint) error {
 
 	for i, subvolume := range subvolumes {
 		log.Printf("%d %s\n", i, subvolume.Path)
+	}
+	return nil
+}
+
+func (command *Command) ListBackupsSizes(mountPoint *btrfs.MountPoint) error {
+	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
+	if err != nil {
+		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+	}
+
+	metaSnapshots, err := btrfs.GetSnapshotsMeta(snapshotsSubvolume.Path)
+	if err != nil {
+		return fmt.Errorf("failed to get meta information about snapshots. Error: %w", err)
+	}
+
+	if len(*metaSnapshots) == 0 {
+		log.Printf("Currently, there is no backups")
+	}
+
+	sort.Slice(*metaSnapshots, func(i, j int) bool {
+		return (*metaSnapshots)[i].Id < (*metaSnapshots)[j].Id
+	})
+	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+	fmt.Fprintln(w, "Id\tBackup Name\tUsage referenced\tUsage exclusive\t")
+	for _, metaSnapshot := range *metaSnapshots {
+		sizeReferencedKb := float64(metaSnapshot.SizeReferenced) / 1024
+		sizeExclusiveKb := float64(metaSnapshot.SizeExclusive) / 1024
+		fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%.2fKb\t%.2fKb\t", metaSnapshot.Id, metaSnapshot.Base.Name, sizeReferencedKb, sizeExclusiveKb))
+	}
+
+	if err := w.Flush(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -89,8 +125,8 @@ func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, yd
 	}
 
 	snapshotFinal, err := btrfs.CreateIncrementalSnapshot(
-		&btrfs.Snapshot{Path: finalBasePath},
-		&btrfs.Snapshot{Path: snapshotNew.Path},
+		btrfs.NewSnapshot(finalBasePath),
+		snapshotNew,
 		snapshotsSubvolume)
 	if err != nil {
 		return err
@@ -128,7 +164,7 @@ func (command *Command) RestoreFromBackup(mountPoint *btrfs.MountPoint, ydbParam
 	return nil
 }
 
-func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.Snapshot, error) {
+func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.Subvolume, error) {
 	// Create temp subvolume
 	subvolumeName := targetPath + "_temp_subvol"
 	subvolume, err := btrfs.CreateSubvolume(subvolumeName)
@@ -154,7 +190,7 @@ func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.
 		return nil, fmt.Errorf("cannot create snapshot %s for the subvolume %s. Error: %w", targetPath, subvolume.Path, err)
 	}
 
-	return &btrfs.Snapshot{Path: targetPath}, nil
+	return btrfs.NewSnapshot(targetPath), nil
 }
 
 /* Utils */

@@ -55,6 +55,8 @@ func parseAndValidateArgs() *cmd.Command {
 
 	var command cmd.Command
 	switch strings.TrimSpace(flag.Arg(0)) {
+	case "list-sizes":
+		command = cmd.ListAllBackupsSizes
 	case "ls", "list":
 		command = cmd.ListAllBackups
 		break
@@ -125,6 +127,11 @@ func main() {
 			log.Panicf("Cannot list backups because of the following error: %v", err)
 		}
 		break
+	case cmd.ListAllBackupsSizes:
+		err := command.ListBackupsSizes(btrfsMountPoint)
+		if err != nil {
+			log.Panicf("Cannot list backup sizes: %v", err)
+		}
 	case cmd.CreateFullBackup:
 		ydbParams := initYdbParams()
 		if err := command.CreateFullBackup(btrfsMountPoint, ydbParams); err != nil {
