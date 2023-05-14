@@ -139,8 +139,6 @@ func MountLoopDevice(loopDevice *LoopDevice) (*MountPoint, error) {
 		return nil, err
 	}
 
-	// TODO: umount in case the loop device was already mounted
-
 	mountCmd := exec.Command(mountPath, loopDevice.Name, btrfsMountPoint)
 	if err := mountCmd.Run(); err != nil {
 		return nil, fmt.Errorf("cannot mount loopdevice to btrfs folder = %s. Error: %w", btrfsMountPoint, err)

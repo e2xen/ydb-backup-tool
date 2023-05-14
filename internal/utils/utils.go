@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 )
@@ -20,8 +21,12 @@ func CreateFile(name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file %s", err)
 	}
-	// TODO: Error handler in defer?
-	defer f.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			log.Printf("WARN: cannot close file descriptor of the file %s", name)
+		}
+	}(f)
 	return nil
 }
 

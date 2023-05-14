@@ -139,13 +139,8 @@ func main() {
 		}
 		break
 	case cmd.CreateIncrementalBackup:
-		if len(flag.Args()) <= 1 {
-			log.Panicf("You should specify base backup: create-inc <base_backup>")
-		}
-
-		baseBackup := flag.Arg(1)
 		ydbParams := initYdbParams()
-		if err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams, baseBackup); err != nil {
+		if err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams); err != nil {
 			log.Panicf("Cannot perform incremental backup: %v", err)
 		}
 		break

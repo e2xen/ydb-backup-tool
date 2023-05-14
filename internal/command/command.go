@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"ydb-backup-tool/internal/btrfs"
 	_const "ydb-backup-tool/internal/const"
+	"ydb-backup-tool/internal/utils"
 	"ydb-backup-tool/internal/ydb"
 )
 
@@ -50,6 +52,16 @@ func (command *Command) ListBackupsSizes(mountPoint *btrfs.MountPoint) error {
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+	}
+
+	syncPath, err := utils.GetBinary("sync")
+	if err != nil {
+		return err
+	}
+
+	syncCmd := exec.Command(syncPath)
+	if err := syncCmd.Run(); err != nil {
+		return fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
 	}
 
 	metaSnapshots, err := btrfs.GetSnapshotsMeta(snapshotsSubvolume.Path)
@@ -96,21 +108,10 @@ func (command *Command) CreateFullBackup(mountPoint *btrfs.MountPoint, ydbParams
 	return nil
 }
 
-func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params, basePath string) error {
-	finalBasePath := strings.TrimSpace(basePath)
-	if !strings.HasPrefix(finalBasePath, "/") {
-		finalBasePath = "/" + finalBasePath
-	}
-	if !strings.HasPrefix(finalBasePath, _const.AppSnapshotsFolderPath) {
-		finalBasePath = _const.AppSnapshotsFolderPath + finalBasePath
-	}
-
-	baseExists, err := verifySnapshotExists(finalBasePath)
+func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params) error {
+	duperemovePath, err := utils.GetBinary("duperemove")
 	if err != nil {
-		return fmt.Errorf("cannot obtain info about backup `%s`", basePath)
-	}
-	if !baseExists {
-		return fmt.Errorf("cannot find base backup: %s", finalBasePath)
+		return err
 	}
 
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
@@ -119,21 +120,18 @@ func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, yd
 	}
 
 	targetPath := snapshotsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	snapshotNew, err := createFullBackupSnapshot(ydbParams, targetPath)
+	snapshot, err := createFullBackupSnapshot(ydbParams, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
 
-	snapshotFinal, err := btrfs.CreateIncrementalSnapshot(
-		btrfs.NewSnapshot(finalBasePath),
-		snapshotNew,
-		snapshotsSubvolume)
-	if err != nil {
-		return err
+	duperemoveCmd := exec.Command(duperemovePath, "-dr", snapshotsSubvolume.Path)
+	if err := duperemoveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to perform data deduplication using `duperemove`. Error: %w", err)
 	}
 
 	log.Print("Successfully performed incremental backup!")
-	log.Print("path: " + snapshotFinal.Path)
+	log.Printf("Path: %s", snapshot.Path)
 
 	return nil
 }
@@ -188,6 +186,16 @@ func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.
 	_, err = btrfs.CreateSnapshot(subvolume, targetPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create snapshot %s for the subvolume %s. Error: %w", targetPath, subvolume.Path, err)
+	}
+
+	syncPath, err := utils.GetBinary("sync")
+	if err != nil {
+		return nil, err
+	}
+
+	syncCmd := exec.Command(syncPath)
+	if err := syncCmd.Run(); err != nil {
+		return nil, fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
 	}
 
 	return btrfs.NewSnapshot(targetPath), nil
