@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 	"ydb-backup-tool/internal/btrfs"
+	"ydb-backup-tool/internal/btrfs/deduplication/duperemove"
 	_const "ydb-backup-tool/internal/const"
+	"ydb-backup-tool/internal/device"
 	"ydb-backup-tool/internal/utils"
 	"ydb-backup-tool/internal/ydb"
 )
@@ -27,7 +28,7 @@ const (
 	RestoreFromBackup
 )
 
-func (command *Command) ListBackups(mountPoint *btrfs.MountPoint) error {
+func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
@@ -48,7 +49,7 @@ func (command *Command) ListBackups(mountPoint *btrfs.MountPoint) error {
 	return nil
 }
 
-func (command *Command) ListBackupsSizes(mountPoint *btrfs.MountPoint) error {
+func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
@@ -59,7 +60,7 @@ func (command *Command) ListBackupsSizes(mountPoint *btrfs.MountPoint) error {
 		return err
 	}
 
-	syncCmd := exec.Command(syncPath)
+	syncCmd := utils.BuildCommand(syncPath)
 	if err := syncCmd.Run(); err != nil {
 		return fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
 	}
@@ -90,7 +91,7 @@ func (command *Command) ListBackupsSizes(mountPoint *btrfs.MountPoint) error {
 	return nil
 }
 
-func (command *Command) CreateFullBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params) error {
+func (command *Command) CreateFullBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
@@ -108,12 +109,7 @@ func (command *Command) CreateFullBackup(mountPoint *btrfs.MountPoint, ydbParams
 	return nil
 }
 
-func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params) error {
-	duperemovePath, err := utils.GetBinary("duperemove")
-	if err != nil {
-		return err
-	}
-
+func (command *Command) CreateIncrementalBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
 	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
@@ -125,18 +121,17 @@ func (command *Command) CreateIncrementalBackup(mountPoint *btrfs.MountPoint, yd
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
 
-	duperemoveCmd := exec.Command(duperemovePath, "-dr", snapshotsSubvolume.Path)
-	if err := duperemoveCmd.Run(); err != nil {
-		return fmt.Errorf("failed to perform data deduplication using `duperemove`. Error: %w", err)
+	if err := duperemove.DeduplicateDirectory(snapshotsSubvolume.Path); err != nil {
+		return err
 	}
 
-	log.Print("Successfully performed incremental backup!")
+	log.Print("Successfully performed incremental backup using deduplication!")
 	log.Printf("Path: %s", snapshot.Path)
 
 	return nil
 }
 
-func (command *Command) RestoreFromBackup(mountPoint *btrfs.MountPoint, ydbParams *ydb.Params, sourcePath string) error {
+func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params, sourcePath string) error {
 	finalSourcePath := strings.TrimSpace(sourcePath)
 	if !strings.HasPrefix(finalSourcePath, "/") {
 		finalSourcePath = "/" + finalSourcePath
@@ -193,7 +188,7 @@ func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.
 		return nil, err
 	}
 
-	syncCmd := exec.Command(syncPath)
+	syncCmd := utils.BuildCommand(syncPath)
 	if err := syncCmd.Run(); err != nil {
 		return nil, fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
 	}

@@ -2,7 +2,6 @@ package ydb
 
 import (
 	"fmt"
-	"os/exec"
 	"ydb-backup-tool/internal/utils"
 )
 
@@ -33,7 +32,7 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 	args = append(args, "tools", "dump", "-o", path)
 
 	// Perform full backup of YDB
-	ydbCmd := exec.Command(ydbPath, args...)
+	ydbCmd := utils.BuildCommand(ydbPath, args...)
 	if err := ydbCmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to perform YDB dump")
 	}
@@ -53,7 +52,7 @@ func Restore(params *Params, sourcePath string) error {
 	args = append(args, "tools", "restore", "-p", ".", "-i", sourcePath)
 
 	// Perform restore of YDB
-	ydbCmd := exec.Command(ydbPath, args...)
+	ydbCmd := utils.BuildCommand(ydbPath, args...)
 	if err := ydbCmd.Run(); err != nil {
 		return fmt.Errorf("failed to restore YDB from the backup `%s`", sourcePath)
 	}

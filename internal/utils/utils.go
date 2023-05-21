@@ -5,12 +5,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 )
 
 func CreateDirectory(dir string) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			return fmt.Errorf("cannot create the following directory: %s. Error: %w", dir, err)
+			return fmt.Errorf("cannot create the following directory: %s", dir)
 		}
 	}
 	return nil
@@ -46,4 +47,21 @@ func GetBinary(binaryName string) (string, error) {
 	}
 
 	return path, nil
+}
+
+func BuildCommand(binaryPath string, args ...string) *exec.Cmd {
+	cmd := exec.Command(binaryPath, args...)
+	if IsDebugEnabled() {
+		cmd.Stderr = os.Stderr
+	}
+
+	return cmd
+}
+
+func IsDebugEnabled() bool {
+	debugFlag, err := strconv.ParseBool(os.Getenv("YDB_BACKUP_TOOL_DEBUG"))
+	if err != nil {
+		debugFlag = false
+	}
+	return debugFlag
 }

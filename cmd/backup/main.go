@@ -7,6 +7,7 @@ import (
 	"ydb-backup-tool/internal/btrfs"
 	cmd "ydb-backup-tool/internal/command"
 	_const "ydb-backup-tool/internal/const"
+	"ydb-backup-tool/internal/device"
 	"ydb-backup-tool/internal/ydb"
 )
 
@@ -83,64 +84,67 @@ func parseAndValidateArgs() *cmd.Command {
 func main() {
 	command := parseAndValidateArgs()
 
-	// TODO: add an optional param to name user's backups. Do we need it?
-
 	// TODO: check if running as sudo
 
 	// TODO: add "--help" option
 	// TODO: add "--debug" option
 
 	// TODO: is is ok that we have only one .img file for all backups(for example, data.img)? Allow users to specify base filename through args?
-	btrfsFileName := _const.AppBaseDataImgName
+	backingFilePath := _const.AppBaseDataBackingFilePath
 	// Verify img file exists or create it in case of absence
-	btrfsImgFile, err := btrfs.GetOrCreateBtrfsImgFile(btrfsFileName)
+	backingFile, created, err := device.GetOrCreateBackingStoreFile(backingFilePath)
 	if err != nil {
-		log.Panicf("Cannot obtain btrfs image file. %v", err)
+		log.Panicf("Cannot obtain backing file")
+	}
+	if created {
+		if err := btrfs.MakeBtrfsFileSystem(backingFile.Path); err != nil {
+			log.Panicf("Failted to make Btrfs file system")
+		}
 	}
 
-	btrfsLoopDev, err := btrfs.SetupLoopDevice(btrfsImgFile)
+	loopDev, err := device.SetupLoopDevice(backingFile)
 	if err != nil {
 		log.Panicf("Cannot create loop device. %v", err)
 	}
-	defer func(loopDevice *btrfs.LoopDevice) {
-		err := btrfs.DetachLoopDevice(loopDevice)
+	defer func(loopDevice *device.LoopDevice) {
+		err := device.DetachLoopDevice(loopDevice)
 		if err != nil {
 			log.Panicf("WARN: cannot detach the loop device.")
 		}
-	}(btrfsLoopDev)
+	}(loopDev)
 
-	btrfsMountPoint, err := btrfs.MountLoopDevice(btrfsLoopDev)
+	mountPoint, err := device.MountLoopDevice(loopDev, _const.AppDataMountPath)
 	if err != nil {
-		log.Panicf("Cannot mount btrfs image file. %v", err)
+		log.Panicf("Cannot mount the backing file. %v", err)
 	}
-	defer func(mountPoint *btrfs.MountPoint) {
-		err := btrfs.Unmount(mountPoint)
+	defer func(mountPoint *device.MountPoint) {
+		err := device.Unmount(mountPoint)
 		if err != nil {
-			log.Printf("WARN: cannot unmount the image file.")
+			log.Printf("WARN: cannot unmount the backing file.")
 		}
-	}(btrfsMountPoint)
+	}(mountPoint)
 
 	switch *command {
 	case cmd.ListAllBackups:
-		err := command.ListBackups(btrfsMountPoint)
+		err := command.ListBackups(mountPoint)
 		if err != nil {
 			log.Panicf("Cannot list backups because of the following error: %v", err)
 		}
 		break
 	case cmd.ListAllBackupsSizes:
-		err := command.ListBackupsSizes(btrfsMountPoint)
+		err := command.ListBackupsSizes(mountPoint)
 		if err != nil {
 			log.Panicf("Cannot list backup sizes: %v", err)
 		}
 	case cmd.CreateFullBackup:
 		ydbParams := initYdbParams()
-		if err := command.CreateFullBackup(btrfsMountPoint, ydbParams); err != nil {
+		if err := command.CreateFullBackup(mountPoint, ydbParams); err != nil {
 			log.Panicf("Cannot perform full backup: %v", err)
 		}
 		break
 	case cmd.CreateIncrementalBackup:
 		ydbParams := initYdbParams()
-		if err := command.CreateIncrementalBackup(btrfsMountPoint, ydbParams); err != nil {
+		if err := command.CreateIncrementalBackup(mountPoint, ydbParams); err != nil {
 			log.Panicf("Cannot perform incremental backup: %v", err)
 		}
 		break
@@ -151,7 +155,7 @@ func main() {
 
 		sourcePath := flag.Arg(1)
 		ydbParams := initYdbParams()
-		if err := command.RestoreFromBackup(btrfsMountPoint, ydbParams, sourcePath); err != nil {
+		if err := command.RestoreFromBackup(mountPoint, ydbParams, sourcePath); err != nil {
 			log.Panicf("Cannot restore from the backup: %v", err)
 		}
 		break
