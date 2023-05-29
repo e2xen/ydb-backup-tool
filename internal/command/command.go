@@ -21,8 +21,7 @@ import (
 type Command int64
 
 const (
-	Undefined Command = iota
-	ListAllBackups
+	ListAllBackups Command = iota
 	ListAllBackupsSizes
 	CreateFullBackup
 	CreateIncrementalBackup

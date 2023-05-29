@@ -41,7 +41,6 @@ func isArgFlagPassed(name string) bool {
 }
 
 func parseAndValidateArgs() *cmd.Command {
-	// TODO: configuration through env
 	flag.Parse()
 
 	if strings.TrimSpace(*ydbEndpoint) == "" {
@@ -71,10 +70,6 @@ func parseAndValidateArgs() *cmd.Command {
 		command = cmd.RestoreFromBackup
 		break
 	default:
-		command = cmd.Undefined
-	}
-
-	if command == cmd.Undefined {
 		log.Panicf("Could not parse command")
 	}
 
