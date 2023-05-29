@@ -298,6 +298,18 @@ func DeleteSnapshot(subvolume *Subvolume) error {
 	return DeleteSubvolume(subvolume)
 }
 
+func VerifySubvolumeExists(path string) (bool, error) {
+	subvolume, err := GetSubvolume(path)
+	if err != nil {
+		return false, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
+	}
+
+	if subvolume != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
 func ResizeFileSystem(path string, newSize string) error {
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {

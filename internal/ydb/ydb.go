@@ -15,11 +15,11 @@ type Params struct {
 	UseMetadataCreds bool
 }
 
-type BackupInfo struct {
+type Backup struct {
 	Path string
 }
 
-func Dump(params *Params, path string) (*BackupInfo, error) {
+func Dump(params *Params, path string) (*Backup, error) {
 	// TODO: add search of binary is user's profile directory if running as sudo
 	ydbPath, err := utils.GetBinary("ydb")
 	if err != nil {
@@ -38,7 +38,7 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 		return nil, fmt.Errorf("failed to perform YDB dump")
 	}
 
-	return &BackupInfo{Path: path}, nil
+	return &Backup{Path: path}, nil
 }
 
 func Restore(params *Params, sourcePath string) error {
