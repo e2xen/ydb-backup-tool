@@ -25,6 +25,14 @@ type SubvolumeMeta struct {
 	SizeReferenced uint64
 }
 
+type FsUsage struct {
+	DeviceSize        int64
+	DeviceAllocated   int64
+	DeviceUnallocated int64
+	Used              int64
+	Free              int64
+}
+
 func NewSubvolume(path string, isSnapshot bool) *Subvolume {
 	pathSplit := strings.Split(path, "/")
 	return &Subvolume{Path: path, Name: pathSplit[len(pathSplit)-1], IsSnapshot: isSnapshot}
@@ -32,6 +40,55 @@ func NewSubvolume(path string, isSnapshot bool) *Subvolume {
 
 func NewSnapshot(path string) *Subvolume {
 	return NewSubvolume(path, true)
+}
+
+func GetFileSystemUsage(path string) (*FsUsage, error) {
+	// sudo btrfs filesystem usage -b -T /var/lib/ydb-backup-tool/mnt
+	btrfsPath, err := utils.GetBinary("btrfs")
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := utils.BuildCommand(btrfsPath, "filesystem", "usage", "-b", "-T", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("cannot obtain btrfs usage statistics")
+	}
+
+	metaMap := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		cuttingByDelimiter := strings.SplitN(line, ":", 2)
+
+		if len(cuttingByDelimiter) == 2 {
+			key := strings.ToLower(strings.TrimSpace(cuttingByDelimiter[0]))
+			value := strings.TrimSpace(cuttingByDelimiter[1])
+			metaMap[key] = value
+		}
+	}
+
+	devSize, err := strconv.ParseInt(metaMap["device size"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse device size from btrfs usage: %s", path)
+	}
+	devAllocated, err := strconv.ParseInt(metaMap["device allocated"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse device allocated from btrfs usage: %s", path)
+	}
+	devUnallocated, err := strconv.ParseInt(metaMap["device unallocated"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse device unallocated from btrfs usage: %s", path)
+	}
+	used, err := strconv.ParseInt(metaMap["used"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse used space from btrfs usage: %s", path)
+	}
+	var free int64
+	n, err := fmt.Sscanf(metaMap["free (estimated)"], "%d", &free)
+	if err != nil || n != 1 {
+		return nil, fmt.Errorf("failed to parse free space from btrfs usage: %s", path)
+	}
+
+	return &FsUsage{DeviceSize: devSize, DeviceAllocated: devAllocated, DeviceUnallocated: devUnallocated, Used: used, Free: free}, nil
 }
 
 func MakeBtrfsFileSystem(filePath string) error {
@@ -99,7 +156,7 @@ func GetSubvolumes(path string) ([]*Subvolume, error) {
 	if err != nil {
 		return nil, err
 	}
-	btrfsCmd := utils.BuildCommand(btrfsPath, "subvolume", "list", path)
+	btrfsCmd := utils.BuildCommand(btrfsPath, "subvolume", "list", "-o", path)
 	out, err := btrfsCmd.Output()
 	if err != nil {
 		return nil, errors.New("cannot get list of subvolumes")
@@ -108,11 +165,12 @@ func GetSubvolumes(path string) ([]*Subvolume, error) {
 	for _, subvolume := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(subvolume) != "" {
 			words := strings.Split(subvolume, " ")
-			path := path + "/" + words[len(words)-1]
+			name := filepath.Base(words[len(words)-1])
+			subvolumePath := path + "/" + name
 
 			// If the subvolume is already in the list, then it is a snapshot - ignore it in the loop
-			if !slices.Contains(result, NewSnapshot(path)) {
-				result = append(result, NewSubvolume(path, false))
+			if !slices.Contains(result, NewSnapshot(subvolumePath)) {
+				result = append(result, NewSubvolume(subvolumePath, false))
 			}
 		}
 	}
@@ -198,8 +256,8 @@ func DeleteSubvolume(subvolume *Subvolume) error {
 	return nil
 }
 
-func GetSnapshotsMeta(path string) (*[]SubvolumeMeta, error) {
-	snapshots, err := GetSnapshots(path)
+func GetSubvolumesMeta(path string) (*[]SubvolumeMeta, error) {
+	subvolumes, err := GetSubvolumes(path)
 	if err != nil {
 		return nil, err
 	}
@@ -215,14 +273,14 @@ func GetSnapshotsMeta(path string) (*[]SubvolumeMeta, error) {
 
 	var result []SubvolumeMeta
 
-	for _, snapshot := range snapshots {
-		cmd := utils.BuildCommand(btrfsPath, "subvolume", "show", "-b", snapshot.Path)
+	for _, subvolume := range subvolumes {
+		cmd := utils.BuildCommand(btrfsPath, "subvolume", "show", "-b", subvolume.Path)
 		out, err := cmd.Output()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get meta information about the following snapshot: %s", snapshot.Path)
+			return nil, fmt.Errorf("failed to get meta information about the following subvolume: %s", subvolume.Path)
 		}
 
-		subvolumeMeta, err := extractSubvolumeMetaInfo(string(out), NewSnapshot(snapshot.Path))
+		subvolumeMeta, err := extractSubvolumeMetaInfo(string(out), NewSubvolume(subvolume.Path, false))
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +296,21 @@ func DeleteSnapshot(subvolume *Subvolume) error {
 	}
 
 	return DeleteSubvolume(subvolume)
+}
+
+func ResizeFileSystem(path string, newSize string) error {
+	btrfsPath, err := utils.GetBinary("btrfs")
+	if err != nil {
+		return err
+	}
+
+	cmd := utils.BuildCommand(btrfsPath, "filesystem", "resize", newSize, path)
+	fmt.Println(cmd.String())
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to resize btrfs %s", path)
+	}
+
+	return nil
 }
 
 func verifySubvolumeExists(subvolume *Subvolume) (bool, error) {

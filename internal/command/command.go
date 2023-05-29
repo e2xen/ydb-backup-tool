@@ -14,6 +14,7 @@ import (
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/device"
 	"ydb-backup-tool/internal/utils"
+	_math "ydb-backup-tool/internal/utils/math"
 	"ydb-backup-tool/internal/ydb"
 )
 
@@ -29,76 +30,75 @@ const (
 )
 
 func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
-	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
-	subvolumes, err := btrfs.GetSnapshots(snapshotsSubvolume.Path)
+	if err := utils.Sync(); err != nil {
+		return err
+	}
+
+	subvolumes, err := btrfs.GetSubvolumes(backupsSubvolume.Path)
 	if err != nil {
 		return fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}
 
 	if len(subvolumes) == 0 {
-		log.Printf("Currently, there is no backups")
+		fmt.Printf("Currently, there is no backups")
 	}
 
 	for i, subvolume := range subvolumes {
-		log.Printf("%d %s\n", i, subvolume.Path)
+		fmt.Printf("%d %s\n", i, subvolume.Path)
 	}
 	return nil
 }
 
 func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
-	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
-	syncPath, err := utils.GetBinary("sync")
-	if err != nil {
+	if err := utils.Sync(); err != nil {
 		return err
 	}
 
-	syncCmd := utils.BuildCommand(syncPath)
-	if err := syncCmd.Run(); err != nil {
-		return fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
-	}
-
-	metaSnapshots, err := btrfs.GetSnapshotsMeta(snapshotsSubvolume.Path)
+	metaSubvolumes, err := btrfs.GetSubvolumesMeta(backupsSubvolume.Path)
 	if err != nil {
-		return fmt.Errorf("failed to get meta information about snapshots. Error: %w", err)
+		return fmt.Errorf("failed to get meta information about subvolumes. Error: %w", err)
 	}
 
-	if len(*metaSnapshots) == 0 {
+	if len(*metaSubvolumes) == 0 {
 		log.Printf("Currently, there is no backups")
+	} else {
+		sort.Slice(*metaSubvolumes, func(i, j int) bool {
+			return (*metaSubvolumes)[i].Id < (*metaSubvolumes)[j].Id
+		})
+		w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+		fmt.Fprintln(w, "Id\tBackup Name\tUsage referenced\tUsage exclusive\t")
+		for _, metaSubvolume := range *metaSubvolumes {
+			sizeReferencedKb := float64(metaSubvolume.SizeReferenced) / 1024
+			sizeExclusiveKb := float64(metaSubvolume.SizeExclusive) / 1024
+			fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%.2fKb\t%.2fKb\t", metaSubvolume.Id, metaSubvolume.Base.Name, sizeReferencedKb, sizeExclusiveKb))
+		}
+
+		if err := w.Flush(); err != nil {
+			return err
+		}
 	}
 
-	sort.Slice(*metaSnapshots, func(i, j int) bool {
-		return (*metaSnapshots)[i].Id < (*metaSnapshots)[j].Id
-	})
-	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
-	fmt.Fprintln(w, "Id\tBackup Name\tUsage referenced\tUsage exclusive\t")
-	for _, metaSnapshot := range *metaSnapshots {
-		sizeReferencedKb := float64(metaSnapshot.SizeReferenced) / 1024
-		sizeExclusiveKb := float64(metaSnapshot.SizeExclusive) / 1024
-		fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%.2fKb\t%.2fKb\t", metaSnapshot.Id, metaSnapshot.Base.Name, sizeReferencedKb, sizeExclusiveKb))
-	}
-
-	if err := w.Flush(); err != nil {
-		return err
-	}
 	return nil
 }
 
 func (command *Command) CreateFullBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
-	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
-	targetPath := snapshotsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	snapshot, err := createFullBackupSnapshot(ydbParams, targetPath)
+	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
+	snapshot, err := createFullBackupSnapshot(mountPoint, ydbParams, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
@@ -110,18 +110,18 @@ func (command *Command) CreateFullBackup(mountPoint *device.MountPoint, ydbParam
 }
 
 func (command *Command) CreateIncrementalBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
-	snapshotsSubvolume, err := getOrCreateSnapshotsSubvolume()
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with snapshots. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
-	targetPath := snapshotsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	snapshot, err := createFullBackupSnapshot(ydbParams, targetPath)
+	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
+	snapshot, err := createFullBackupSnapshot(mountPoint, ydbParams, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
 
-	if err := duperemove.DeduplicateDirectory(snapshotsSubvolume.Path); err != nil {
+	if err := duperemove.DeduplicateDirectory(backupsSubvolume.Path); err != nil {
 		return err
 	}
 
@@ -136,15 +136,15 @@ func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbPara
 	if !strings.HasPrefix(finalSourcePath, "/") {
 		finalSourcePath = "/" + finalSourcePath
 	}
-	if !strings.HasPrefix(finalSourcePath, _const.AppSnapshotsFolderPath) {
-		finalSourcePath = _const.AppSnapshotsFolderPath + finalSourcePath
+	if !strings.HasPrefix(finalSourcePath, _const.AppBackupsPath) {
+		finalSourcePath = _const.AppBackupsPath + finalSourcePath
 	}
 
-	snapshotExists, err := verifySnapshotExists(finalSourcePath)
+	subvolumeExists, err := verifySubvolumeExists(finalSourcePath)
 	if err != nil {
-		return fmt.Errorf("cannot obtain info about backup `%s`", sourcePath)
+		return fmt.Errorf("cannot obtain info about backup: %s", sourcePath)
 	}
-	if !snapshotExists {
+	if !subvolumeExists {
 		return fmt.Errorf("cannot find backup: %s", sourcePath)
 	}
 
@@ -157,67 +157,85 @@ func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbPara
 	return nil
 }
 
-func createFullBackupSnapshot(ydbParams *ydb.Params, targetPath string) (*btrfs.Subvolume, error) {
-	// Create temp subvolume
-	subvolumeName := targetPath + "_temp_subvol"
-	subvolume, err := btrfs.CreateSubvolume(subvolumeName)
+func createFullBackupSnapshot(mountPoint *device.MountPoint, ydbParams *ydb.Params, targetPath string) (*btrfs.Subvolume, error) {
+	err := utils.CreateDirectory(_const.AppTmpPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create a temp subvolume %s", subvolumeName)
+		return nil, fmt.Errorf("failed to create directory `%s`", _const.AppTmpPath)
+	}
+
+	tempBackupPath := _const.AppTmpPath + "/temp_backup_" + strconv.Itoa(int(time.Now().Unix()))
+	if err := utils.CreateDirectory(tempBackupPath); err != nil {
+		return nil, fmt.Errorf("failed to create a temporary directory for backup `%s`", tempBackupPath)
 	}
 	defer func() {
-		// Delete temp subvolume
-		err = btrfs.DeleteSubvolume(subvolume)
-		if err != nil {
-			log.Printf("failed to delete temp subvolume `%s`. Error: %w", subvolumeName, err)
+		if err := utils.DeleteFile(tempBackupPath); err != nil {
+			log.Printf("WARN: failed to delete temporary backup directory: %s", tempBackupPath)
 		}
 	}()
-
-	_, err = ydb.Dump(ydbParams, subvolume.Path)
+	_, err = ydb.Dump(ydbParams, tempBackupPath)
 	if err != nil {
-		return nil, fmt.Errorf("error occurred during YDB backup process: %w", err)
+		return nil, fmt.Errorf("error occurred during YDB backup process: %s", err)
 	}
 
-	// Create snapshot from the temp subvolume
-	_, err = btrfs.CreateSnapshot(subvolume, targetPath)
+	backupSize, err := utils.GetDirectorySize(tempBackupPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot create snapshot %s for the subvolume %s. Error: %w", targetPath, subvolume.Path, err)
+		return nil, fmt.Errorf("failed to get size of `%s`: %s", tempBackupPath, err)
 	}
 
-	syncPath, err := utils.GetBinary("sync")
+	meta, err := btrfs.GetFileSystemUsage(mountPoint.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get btrfs usage info: %s", err)
+	}
+
+	// Also, we should have 16Kib of free space to store subvolume metadata
+	btrfsFreeSpace := meta.Free - 16*1024
+	sizeDiff := btrfsFreeSpace - backupSize
+	if sizeDiff < 0 {
+		// Extend backing file size
+		extendBy := _math.Abs(sizeDiff)
+		if err := device.ExtendBackingStoreFileBy(&mountPoint.LoopDev.BackFile, _math.Abs(extendBy)); err != nil {
+
+			fmt.Printf("Extending by %d", extendBy)
+			return nil, fmt.Errorf("failed to extend backing store file: %s", err)
+		}
+
+		if err := btrfs.ResizeFileSystem(mountPoint.Path, "max"); err != nil {
+			return nil, err
+		}
+	}
+
+	subvolume, err := btrfs.CreateSubvolume(targetPath)
 	if err != nil {
 		return nil, err
 	}
 
-	syncCmd := utils.BuildCommand(syncPath)
-	if err := syncCmd.Run(); err != nil {
-		return nil, fmt.Errorf("cannot sync synchronize data on the disk with RAM using sync. Error: %v", err)
+	if err := utils.MoveFilesFromDirToDir(tempBackupPath, subvolume.Path); err != nil {
+		return nil, err
 	}
 
-	return btrfs.NewSnapshot(targetPath), nil
+	return subvolume, nil
 }
 
-/* Utils */
-func verifySnapshotExists(path string) (bool, error) {
-	snapshot, err := btrfs.GetSnapshot(path)
+func verifySubvolumeExists(path string) (bool, error) {
+	subvolume, err := btrfs.GetSubvolume(path)
 	if err != nil {
 		return false, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
 	}
 
-	if snapshot != nil {
+	if subvolume != nil {
 		return true, nil
 	}
 	return false, nil
 }
 
-func getOrCreateSnapshotsSubvolume() (*btrfs.Subvolume, error) {
-	appSnapshotsPath := _const.AppSnapshotsFolderPath
-	subvolume, err := btrfs.GetSubvolume(appSnapshotsPath)
+func getOrCreateBackupsSubvolume() (*btrfs.Subvolume, error) {
+	subvolume, err := btrfs.GetSubvolume(_const.AppBackupsPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot obtain info to verify that subvolume with snapshots exists. Error: %w", err)
+		return nil, fmt.Errorf("cannot obtain info to verify that subvolume with backup exists. Error: %w", err)
 	}
 
 	if subvolume == nil {
-		subvolume, err := btrfs.CreateSubvolume(appSnapshotsPath)
+		subvolume, err := btrfs.CreateSubvolume(_const.AppBackupsPath)
 		if err != nil {
 			return nil, err
 		}

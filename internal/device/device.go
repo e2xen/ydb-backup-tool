@@ -10,11 +10,11 @@ import (
 	"ydb-backup-tool/internal/utils"
 )
 
-type LoopDevicesObj struct {
-	Loopdevices []LoopDevice
+type BackingFile struct {
+	Path string
 }
 
-type LoopDevice struct {
+type loopDeviceJson struct {
 	Name      string
 	Sizelimit int
 	Autoclear bool
@@ -24,12 +24,23 @@ type LoopDevice struct {
 	LogSec    int `json:"log-sec"`
 }
 
-type BackingFile struct {
-	Path string
+type loopDevicesJson struct {
+	Loopdevices []loopDeviceJson
+}
+
+type LoopDevice struct {
+	Name      string
+	Sizelimit int
+	Autoclear bool
+	Ro        bool
+	BackFile  BackingFile
+	Dio       bool
+	LogSec    int `json:"log-sec"`
 }
 
 type MountPoint struct {
-	Path string
+	Path    string
+	LoopDev LoopDevice
 }
 
 func Unmount(mountPoint *MountPoint) error {
@@ -56,24 +67,6 @@ func GetOrCreateBackingStoreFile(filePath string) (*BackingFile, bool, error) {
 	return &BackingFile{filePath}, false, nil
 }
 
-func createBackingStoreFile(filePath string) error {
-	// Create directory for app data in case it doesn't exist
-	if err := utils.CreateDirectory(_const.AppDataPath); err != nil {
-		return err
-	}
-
-	ddPath, err := utils.GetBinary("dd")
-	if err != nil {
-		return err
-	}
-	ddCmd := utils.BuildCommand(ddPath, "if=/dev/zero", "of="+filePath, "bs=1M", "count=1024")
-	if err := ddCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create img file: %s", filePath)
-	}
-
-	return nil
-}
-
 func SetupLoopDevice(backingFile *BackingFile) (*LoopDevice, error) {
 	losetupPath, err := utils.GetBinary("losetup")
 	if err != nil {
@@ -91,23 +84,31 @@ func SetupLoopDevice(backingFile *BackingFile) (*LoopDevice, error) {
 		return nil, errors.New("cannot get list of loopback devices")
 	}
 
-	var loopDeviceObj LoopDevicesObj
-	if err := json.Unmarshal(out, &loopDeviceObj); err != nil {
+	var loopDevicesJson loopDevicesJson
+	if err := json.Unmarshal(out, &loopDevicesJson); err != nil {
 		return nil, errors.New("cannot deserialize json with loopback devices")
 	}
 
-	var loopDevice *LoopDevice = nil
-	for _, d := range loopDeviceObj.Loopdevices {
+	var loopDevJson *loopDeviceJson = nil
+	for _, d := range loopDevicesJson.Loopdevices {
 		if strings.EqualFold(d.BackFile, backingFile.Path) {
-			loopDevice = &d
+			loopDevJson = &d
 			break
 		}
 	}
-	if loopDevice == nil {
+	if loopDevJson == nil {
 		return nil, errors.New("cannot find loop device")
 	}
 
-	return loopDevice, nil
+	return &LoopDevice{
+		Name:      loopDevJson.Name,
+		Sizelimit: loopDevJson.Sizelimit,
+		Autoclear: loopDevJson.Autoclear,
+		Ro:        loopDevJson.Autoclear,
+		BackFile:  BackingFile{loopDevJson.BackFile},
+		Dio:       loopDevJson.Dio,
+		LogSec:    loopDevJson.LogSec,
+	}, nil
 }
 
 func DetachLoopDevice(device *LoopDevice) error {
@@ -140,5 +141,61 @@ func MountLoopDevice(loopDevice *LoopDevice, mountTargetPath string) (*MountPoin
 		return nil, fmt.Errorf("cannot mount loopdevice to folder %s", mountTargetPath)
 	}
 
-	return &MountPoint{mountTargetPath}, nil
+	return &MountPoint{Path: mountTargetPath, LoopDev: *loopDevice}, nil
+}
+
+func ExtendBackingStoreFileBy(backingFile *BackingFile, size int64) error {
+	currentSize, err := utils.GetFileSize(backingFile.Path)
+	if err != nil {
+		return fmt.Errorf("failed to get the file size of %s", backingFile.Path)
+	}
+
+	if size < 0 {
+		return fmt.Errorf("not allowed to shrink the backing file %s", backingFile.Path)
+	}
+
+	if size > 0 {
+		// Bytes to MB
+		targetSizeInMb := size / (1024 * 1024)
+		if size%(1024*1024) != 0 {
+			targetSizeInMb += 1
+		}
+		// Bytes to MB
+		targetSizeInMb += currentSize / (1024 * 1024)
+		if currentSize%(1024*1024) != 0 {
+			targetSizeInMb += 1
+		}
+
+		dd, err := utils.GetBinary("dd")
+		if err != nil {
+			return err
+		}
+
+		cmd := utils.BuildCommand(dd, "if=/dev/zero", "bs=1M", fmt.Sprintf("seek=%d", targetSizeInMb),
+			"count=0", fmt.Sprintf("of=%s", backingFile.Path))
+		fmt.Println(cmd.String())
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to extend backing file %s size to %dMB", backingFile.Path, size)
+		}
+	}
+
+	return nil
+}
+
+func createBackingStoreFile(filePath string) error {
+	// Create directory for app data in case it doesn't exist
+	if err := utils.CreateDirectory(_const.AppDataPath); err != nil {
+		return err
+	}
+
+	ddPath, err := utils.GetBinary("dd")
+	if err != nil {
+		return err
+	}
+	ddCmd := utils.BuildCommand(ddPath, "if=/dev/zero", "of="+filePath, "bs=1M", "count=256")
+	if err := ddCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create img file: %s", filePath)
+	}
+
+	return nil
 }

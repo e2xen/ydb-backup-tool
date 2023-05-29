@@ -51,7 +51,7 @@ func parseAndValidateArgs() *cmd.Command {
 		log.Panic("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
 	}
 	if len(flag.Args()) == 0 {
-		log.Panic("You need to pass command")
+		log.Panic("You need to pass a command")
 	}
 
 	var command cmd.Command
@@ -89,7 +89,6 @@ func main() {
 	// TODO: add "--help" option
 	// TODO: add "--debug" option
 
-	// TODO: is is ok that we have only one .img file for all backups(for example, data.img)? Allow users to specify base filename through args?
 	backingFilePath := _const.AppBaseDataBackingFilePath
 	// Verify img file exists or create it in case of absence
 	backingFile, created, err := device.GetOrCreateBackingStoreFile(backingFilePath)
@@ -98,7 +97,7 @@ func main() {
 	}
 	if created {
 		if err := btrfs.MakeBtrfsFileSystem(backingFile.Path); err != nil {
-			log.Panicf("Failted to make Btrfs file system")
+			log.Panicf("Failed to make Btrfs")
 		}
 	}
 

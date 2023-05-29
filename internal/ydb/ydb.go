@@ -33,6 +33,7 @@ func Dump(params *Params, path string) (*BackupInfo, error) {
 
 	// Perform full backup of YDB
 	ydbCmd := utils.BuildCommand(ydbPath, args...)
+	fmt.Println(ydbCmd.String())
 	if err := ydbCmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to perform YDB dump")
 	}
@@ -62,15 +63,12 @@ func Restore(params *Params, sourcePath string) error {
 
 func addAuthParams(params *Params, args []string) []string {
 	if params.YcTokenFile != "" {
-		// TODO: maybe check that params.YcTokenFile exists
 		args = append(args, "--yc-token-file", params.YcTokenFile)
 	}
 	if params.IamTokenFile != "" {
-		// TODO: maybe check that params.IamTokenFile exists
 		args = append(args, "--iam-token-file", params.IamTokenFile)
 	}
 	if params.SaKeyFile != "" {
-		// TODO: maybe check that params.SaKeyFile exists
 		args = append(args, "--sa-key-file", params.SaKeyFile)
 	}
 	if params.Profile != "" {
