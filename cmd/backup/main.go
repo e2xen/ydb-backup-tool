@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"ydb-backup-tool/internal/btrfs"
+	comp "ydb-backup-tool/internal/btrfs/compression"
 	cmd "ydb-backup-tool/internal/command"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/device"
@@ -12,12 +13,15 @@ import (
 )
 
 var (
-	ydbEndpoint     *string
-	ydbName         *string
-	ydbYcTokenFile  *string
-	ydbIamTokenFile *string
-	ydbSaKeyFile    *string
-	ydbProfile      *string
+	ydbEndpoint          *string
+	ydbName              *string
+	ydbYcTokenFile       *string
+	ydbIamTokenFile      *string
+	ydbSaKeyFile         *string
+	ydbProfile           *string
+	compressionAlgorithm *string
+	compressionLevel     *uint64
+	compression          *comp.Compression
 )
 
 func init() {
@@ -27,6 +31,9 @@ func init() {
 	ydbIamTokenFile = flag.String(_const.YdbIamTokenFileArg, "", "YDB IAM token file")
 	ydbSaKeyFile = flag.String(_const.YdbSaKeyFileArg, "", "YDB Service Account Key file")
 	ydbProfile = flag.String(_const.YdbProfileArg, "", "YDB profile name")
+	compressionAlgorithm = flag.String(_const.CompressionAlgorithmArg, "", "Compression algorithm")
+	compressionLevel = flag.Uint64(_const.CompressionLevelArg, 1, "Compression level")
+
 	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB use the metadata service")
 }
 
@@ -48,6 +55,15 @@ func parseAndValidateArgs() *cmd.Command {
 	}
 	if strings.TrimSpace(*ydbName) == "" {
 		log.Panic("You need to specify YDB database name passing the following parameter: \"--ydb-name=<name>\"")
+	}
+	if strings.TrimSpace(*compressionAlgorithm) != "" {
+		compressionAlgorithm := strings.ToLower(strings.TrimSpace(*compressionAlgorithm))
+		compressionObj, err := comp.CreateCompression(comp.Algorithm(compressionAlgorithm), *compressionLevel)
+		if err != nil {
+			log.Panicf("Failed to parse compression parameters: %s", err)
+		}
+
+		compression = &compressionObj
 	}
 	if len(flag.Args()) == 0 {
 		log.Panic("You need to pass a command")
@@ -107,7 +123,7 @@ func main() {
 		}
 	}(loopDev)
 
-	mountPoint, err := device.MountLoopDevice(loopDev, _const.AppDataMountPath)
+	mountPoint, err := device.MountLoopDevice(loopDev, _const.AppDataMountPath, compression)
 	if err != nil {
 		log.Panicf("Cannot mount the backing file. %v", err)
 	}
@@ -132,13 +148,13 @@ func main() {
 		}
 	case cmd.CreateFullBackup:
 		ydbParams := initYdbParams()
-		if err := command.CreateFullBackup(mountPoint, ydbParams); err != nil {
+		if err := command.CreateFullBackup(mountPoint, ydbParams, compression); err != nil {
 			log.Panicf("Cannot perform full backup: %v", err)
 		}
 		break
 	case cmd.CreateIncrementalBackup:
 		ydbParams := initYdbParams()
-		if err := command.CreateIncrementalBackup(mountPoint, ydbParams); err != nil {
+		if err := command.CreateIncrementalBackup(mountPoint, ydbParams, compression); err != nil {
 			log.Panicf("Cannot perform incremental backup: %v", err)
 		}
 		break

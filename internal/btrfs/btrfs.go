@@ -325,6 +325,19 @@ func ResizeFileSystem(path string, newSize string) error {
 	return nil
 }
 
+func SetProperty(path string, key string, value string) error {
+	btrfsPath, err := utils.GetBinary("btrfs")
+	if err != nil {
+		return err
+	}
+
+	cmd := utils.BuildCommand(btrfsPath, "property", "set", path, key, value)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set property %s = %s for the given path %s", key, value, path)
+	}
+	return nil
+}
+
 func verifySubvolumeExists(subvolume *Subvolume) (bool, error) {
 	dir := filepath.Dir(subvolume.Path)
 

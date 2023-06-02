@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	comp "ydb-backup-tool/internal/btrfs/compression"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/utils"
 )
@@ -125,7 +126,7 @@ func DetachLoopDevice(device *LoopDevice) error {
 	return nil
 }
 
-func MountLoopDevice(loopDevice *LoopDevice, mountTargetPath string) (*MountPoint, error) {
+func MountLoopDevice(loopDevice *LoopDevice, mountTargetPath string, compression *comp.Compression) (*MountPoint, error) {
 	if err := utils.CreateDirectory(mountTargetPath); err != nil {
 		return nil, err
 	}
@@ -135,7 +136,13 @@ func MountLoopDevice(loopDevice *LoopDevice, mountTargetPath string) (*MountPoin
 		return nil, err
 	}
 
-	mountCmd := utils.BuildCommand(mountPath, loopDevice.Name, mountTargetPath)
+	var args []string
+	if compression != nil {
+		args = append(args, "-o", fmt.Sprintf("compress=%s:%d", (*compression).Algorithm(), (*compression).CompressionLevel()))
+	}
+	args = append(args, loopDevice.Name, mountTargetPath)
+
+	mountCmd := utils.BuildCommand(mountPath, args...)
 
 	if err := mountCmd.Run(); err != nil {
 		return nil, fmt.Errorf("cannot mount loopdevice to folder %s", mountTargetPath)

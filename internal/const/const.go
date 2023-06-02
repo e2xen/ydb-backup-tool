@@ -1,5 +1,7 @@
 package _const
 
+const CompressionAlgorithmArg = "compress"
+const CompressionLevelArg = "compress-level"
 const YdbEndpointArg = "ydb-endpoint"
 const YdbNameArg = "ydb-name"
 const YdbYcTokenFileArg = "ydb-yc-token-file"

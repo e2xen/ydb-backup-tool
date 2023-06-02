@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 	"ydb-backup-tool/internal/btrfs"
+	comp "ydb-backup-tool/internal/btrfs/compression"
 	"ydb-backup-tool/internal/btrfs/deduplication/duperemove"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/device"
@@ -90,14 +91,17 @@ func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
 	return nil
 }
 
-func (command *Command) CreateFullBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
+func (command *Command) CreateFullBackup(
+	mountPoint *device.MountPoint,
+	ydbParams *ydb.Params,
+	compression *comp.Compression) error {
 	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
 	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, targetPath)
+	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, compression, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
@@ -108,14 +112,18 @@ func (command *Command) CreateFullBackup(mountPoint *device.MountPoint, ydbParam
 	return nil
 }
 
-func (command *Command) CreateIncrementalBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params) error {
+func (command *Command) CreateIncrementalBackup(
+	mountPoint *device.MountPoint,
+	ydbParams *ydb.Params,
+	compression *comp.Compression) error {
+
 	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
 		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
 	}
 
 	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, targetPath)
+	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, compression, targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot perform full backup. Error: %w", err)
 	}
@@ -156,7 +164,11 @@ func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbPara
 	return nil
 }
 
-func createFullBackupSubvolume(mountPoint *device.MountPoint, ydbParams *ydb.Params, targetPath string) (*btrfs.Subvolume, error) {
+func createFullBackupSubvolume(
+	mountPoint *device.MountPoint,
+	ydbParams *ydb.Params,
+	compression *comp.Compression,
+	targetPath string) (*btrfs.Subvolume, error) {
 	err := utils.CreateDirectory(_const.AppTmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create directory `%s`", _const.AppTmpPath)
@@ -206,6 +218,11 @@ func createFullBackupSubvolume(mountPoint *device.MountPoint, ydbParams *ydb.Par
 	subvolume, err := btrfs.CreateSubvolume(targetPath)
 	if err != nil {
 		return nil, err
+	}
+	if compression != nil {
+		if err := comp.EnableCompression(subvolume.Path, *compression); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := utils.MoveFilesFromDirToDir(backup.Path, subvolume.Path); err != nil {
