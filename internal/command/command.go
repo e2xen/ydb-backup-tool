@@ -206,7 +206,6 @@ func createFullBackupSubvolume(
 		extendBy := _math.Abs(sizeDiff)
 		if err := device.ExtendBackingStoreFileBy(&mountPoint.LoopDev.BackFile, _math.Abs(extendBy)); err != nil {
 
-			fmt.Printf("Extending by %d", extendBy)
 			return nil, fmt.Errorf("failed to extend backing store file: %s", err)
 		}
 

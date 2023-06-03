@@ -180,7 +180,6 @@ func ExtendBackingStoreFileBy(backingFile *BackingFile, size int64) error {
 
 		cmd := utils.BuildCommand(dd, "if=/dev/zero", "bs=1M", fmt.Sprintf("seek=%d", targetSizeInMb),
 			"count=0", fmt.Sprintf("of=%s", backingFile.Path))
-		fmt.Println(cmd.String())
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to extend backing file %s size to %dMB", backingFile.Path, size)
 		}

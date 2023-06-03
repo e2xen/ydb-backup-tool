@@ -317,7 +317,6 @@ func ResizeFileSystem(path string, newSize string) error {
 	}
 
 	cmd := utils.BuildCommand(btrfsPath, "filesystem", "resize", newSize, path)
-	fmt.Println(cmd.String())
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to resize btrfs %s", path)
 	}

@@ -33,7 +33,6 @@ func Dump(params *Params, path string) (*Backup, error) {
 
 	// Perform full backup of YDB
 	ydbCmd := utils.BuildCommand(ydbPath, args...)
-	fmt.Println(ydbCmd.String())
 	if err := ydbCmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to perform YDB dump")
 	}
