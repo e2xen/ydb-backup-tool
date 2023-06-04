@@ -3,7 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"os/exec"
 	"path"
@@ -71,7 +71,7 @@ func CreateFile(path string) error {
 	defer func(f *os.File) {
 		err := f.Close()
 		if err != nil {
-			log.Printf("WARN: cannot close file descriptor of the file %s", path)
+			log.Warnf("cannot close file descriptor of the file %s", path)
 		}
 	}(f)
 	return nil

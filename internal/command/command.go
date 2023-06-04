@@ -2,7 +2,7 @@ package command
 
 import (
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"sort"
 	"strconv"
@@ -227,7 +227,7 @@ func createFullBackupSubvolume(
 	}
 	defer func() {
 		if err := utils.DeleteDirectory(tempBackupPath); err != nil {
-			log.Printf("WARN: failed to delete temporary backup directory: %s", tempBackupPath)
+			log.Warnf("failed to delete temporary backup directory: %s", tempBackupPath)
 		}
 	}()
 

@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"os"
 	"time"
 	_const "ydb-backup-tool/internal/const"
@@ -131,7 +131,7 @@ func saveStateToFile(metaFileStructure *metaFileStructure) error {
 	}
 	defer func(f *os.File) {
 		if err := f.Close(); err != nil {
-			log.Printf("WARN: failed to close descriptor of the file %s", f.Name())
+			log.Warnf("failed to close descriptor of the file %s", f.Name())
 		}
 	}(f)
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"strings"
 	"ydb-backup-tool/internal/btrfs"
 	comp "ydb-backup-tool/internal/btrfs/compression"
@@ -120,7 +120,7 @@ func main() {
 	defer func(loopDevice *device.LoopDevice) {
 		err := device.DetachLoopDevice(loopDevice)
 		if err != nil {
-			log.Panicf("WARN: cannot detach the loop device.")
+			log.Warnf("cannot detach the loop device.")
 		}
 	}(loopDev)
 
@@ -131,12 +131,12 @@ func main() {
 	defer func(mountPoint *device.MountPoint) {
 		err := device.Unmount(mountPoint)
 		if err != nil {
-			log.Printf("WARN: cannot unmount the backing file.")
+			log.Warnf("cannot unmount the backing file.")
 		}
 	}(mountPoint)
 
 	if err := utils.ClearTempDirectory(_const.AppTmpPath); err != nil {
-		log.Printf("WARN: cannot clean temp directory %s", _const.AppTmpPath)
+		log.Warnf("cannot clean temp directory %s", _const.AppTmpPath)
 	}
 
 	switch *command {
