@@ -12,6 +12,7 @@ const YdbUseMetadataCredsArg = "ydb-use-metadata-credentials"
 
 const AppDataPath = "/var/lib/ydb-backup-tool"
 const AppTmpPath = AppDataPath + "/tmp"
+const AppMetaPath = AppDataPath + "/meta.json"
 const AppBaseDataBackingFilePath = AppDataPath + "/data.img"
 const AppDataMountPath = AppDataPath + "/mnt"
 const AppBackupsPath = AppDataMountPath + "/backups"
