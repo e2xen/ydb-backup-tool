@@ -20,6 +20,16 @@ func CreateDirectory(dir string) error {
 	return nil
 }
 
+func ClearTempDirectory(path string) error {
+	if err := DeleteDirectory(path); err != nil {
+		return err
+	}
+	if err := CreateDirectory(path); err != nil {
+		return err
+	}
+	return nil
+}
+
 func GetFileSize(path string) (int64, error) {
 	fi, err := os.Stat(path)
 	if err != nil {

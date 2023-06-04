@@ -9,6 +9,7 @@ import (
 	cmd "ydb-backup-tool/internal/command"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/device"
+	"ydb-backup-tool/internal/utils"
 	"ydb-backup-tool/internal/ydb"
 )
 
@@ -133,6 +134,10 @@ func main() {
 			log.Printf("WARN: cannot unmount the backing file.")
 		}
 	}(mountPoint)
+
+	if err := utils.ClearTempDirectory(_const.AppTmpPath); err != nil {
+		log.Printf("WARN: cannot clean temp directory %s", _const.AppTmpPath)
+	}
 
 	switch *command {
 	case cmd.ListAllBackups:
