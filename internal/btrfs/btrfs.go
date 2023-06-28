@@ -68,24 +68,24 @@ func GetFileSystemUsage(path string) (*FsUsage, error) {
 
 	devSize, err := strconv.ParseInt(metaMap["device size"], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse device size from btrfs usage: %s", path)
+		return nil, fmt.Errorf("failed to parse device size from btrfs usage of `%s`", path)
 	}
 	devAllocated, err := strconv.ParseInt(metaMap["device allocated"], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse device allocated from btrfs usage: %s", path)
+		return nil, fmt.Errorf("failed to parse device allocated from btrfs usage of `%s`", path)
 	}
 	devUnallocated, err := strconv.ParseInt(metaMap["device unallocated"], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse device unallocated from btrfs usage: %s", path)
+		return nil, fmt.Errorf("failed to parse device unallocated from btrfs usage of `%s`", path)
 	}
 	used, err := strconv.ParseInt(metaMap["used"], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse used space from btrfs usage: %s", path)
+		return nil, fmt.Errorf("failed to parse used space from btrfs usage of `%s`", path)
 	}
 	var free int64
 	n, err := fmt.Sscanf(metaMap["free (estimated)"], "%d", &free)
 	if err != nil || n != 1 {
-		return nil, fmt.Errorf("failed to parse free space from btrfs usage: %s", path)
+		return nil, fmt.Errorf("failed to parse free space from btrfs usage of `%s`", path)
 	}
 
 	return &FsUsage{DeviceSize: devSize, DeviceAllocated: devAllocated, DeviceUnallocated: devUnallocated, Used: used, Free: free}, nil
@@ -98,13 +98,13 @@ func MakeBtrfsFileSystem(filePath string) error {
 	}
 	mkfsCmd := utils.BuildCommand(mkfsPath, filePath)
 	if err := mkfsCmd.Run(); err != nil {
-		return fmt.Errorf("failed to initialize btrfs in the file: %s", filePath)
+		return fmt.Errorf("failed to initialize btrfs in the file `%s`", filePath)
 	}
 
 	return nil
 }
 
-/* It will not work with recursive subvolumes */
+// CreateSubvolume /* It will not work with recursive subvolumes */
 func CreateSubvolume(path string) (*Subvolume, error) {
 	btrfsPath, err := utils.GetBinary("btrfs")
 	if err != nil {
@@ -113,7 +113,7 @@ func CreateSubvolume(path string) (*Subvolume, error) {
 
 	btrfsCmd := utils.BuildCommand(btrfsPath, "subvolume", "create", path)
 	if err := btrfsCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to create subvolume: %s", path)
+		return nil, fmt.Errorf("failed to create subvolume `%s`", path)
 	}
 
 	return NewSubvolume(path, false), nil
@@ -126,7 +126,7 @@ func CreateSnapshot(subvolume *Subvolume, snapshotTargetPath string) (*Subvolume
 		return nil, errors.New("cannot verify that subvolume exists")
 	}
 	if !subvolumeExists {
-		return nil, fmt.Errorf("cannot find subvolume: %s", err)
+		return nil, fmt.Errorf("cannot find subvolume `%s`: %w", subvolume.Path, err)
 	}
 
 	btrfsPath, err := utils.GetBinary("btrfs")
@@ -242,7 +242,7 @@ func DeleteSubvolume(subvolume *Subvolume) error {
 
 	subvolumeExists, err := verifySubvolumeExists(subvolume)
 	if err != nil {
-		return fmt.Errorf("failed to verify the existence of the following subvolume: %s", subvolume.Path)
+		return fmt.Errorf("failed to verify the existence of the following subvolume `%s`", subvolume.Path)
 	}
 	if !subvolumeExists {
 		return fmt.Errorf("subvolume %s does not exist", subvolume.Path)
@@ -250,7 +250,7 @@ func DeleteSubvolume(subvolume *Subvolume) error {
 
 	btrfsCmd := utils.BuildCommand(btrfsPath, "subvolume", "delete", subvolume.Path)
 	if err := btrfsCmd.Run(); err != nil {
-		return fmt.Errorf("failed to delete the following subvolume: %s", subvolume.Path)
+		return fmt.Errorf("failed to delete the following subvolume `%s`", subvolume.Path)
 	}
 
 	return nil
@@ -263,7 +263,7 @@ func GetSubvolumesMeta(path string) (*[]SubvolumeMeta, error) {
 	}
 
 	if err := quotaGroupEnable(path); err != nil {
-		return nil, fmt.Errorf("failed to enable quota group for the given path: %s", path)
+		return nil, fmt.Errorf("failed to enable quota group for the given path `%s`", path)
 	}
 
 	btrfsPath, err := utils.GetBinary("btrfs")
@@ -277,7 +277,7 @@ func GetSubvolumesMeta(path string) (*[]SubvolumeMeta, error) {
 		cmd := utils.BuildCommand(btrfsPath, "subvolume", "show", "-b", subvolume.Path)
 		out, err := cmd.Output()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get meta information about the following subvolume: %s", subvolume.Path)
+			return nil, fmt.Errorf("failed to get meta information about the following subvolume `%s`", subvolume.Path)
 		}
 
 		subvolumeMeta, err := extractSubvolumeMetaInfo(string(out), NewSubvolume(subvolume.Path, false))
@@ -301,7 +301,7 @@ func DeleteSnapshot(subvolume *Subvolume) error {
 func VerifySubvolumeExists(path string) (bool, error) {
 	subvolume, err := GetSubvolume(path)
 	if err != nil {
-		return false, fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
+		return false, fmt.Errorf("cannot get list of subvolumes: %w", err)
 	}
 
 	if subvolume != nil {

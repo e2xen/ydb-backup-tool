@@ -30,7 +30,7 @@ type metaFileStructure struct {
 func StartBackup(path string) error {
 	btrfsNode, err := GetBtrfsNode()
 	if err != err {
-		return fmt.Errorf("failed to get current backups meta info: %s", err)
+		return fmt.Errorf("failed to get current backups meta info: %w", err)
 	}
 
 	for _, backup := range btrfsNode.Backups {
@@ -55,7 +55,7 @@ func StartBackup(path string) error {
 func FinishBackup(path string) error {
 	btrfsNode, err := GetBtrfsNode()
 	if err != err {
-		return fmt.Errorf("failed to get current backups meta info: %s", err)
+		return fmt.Errorf("failed to get current backups meta info: %w", err)
 	}
 
 	for i := range btrfsNode.Backups {
@@ -82,15 +82,28 @@ func GetBtrfsNode() (*BtrfsNode, error) {
 	r := bufio.NewReader(f)
 	buff, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read from the meta file %s: %s", _const.AppMetaPath, err)
+		return nil, fmt.Errorf("failed to read from the meta file `%s`: %w", _const.AppMetaPath, err)
 	}
 
 	var metaFileStruct metaFileStructure
 	if err := json.Unmarshal(buff, &metaFileStruct); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON object from the meta file %s: %s", _const.AppMetaPath, err)
+		return nil, fmt.Errorf("failed to parse JSON object from the meta file `%s`: %w", _const.AppMetaPath,
+			err)
 	}
 
 	return &metaFileStruct.Btrfs, nil
+}
+
+func GetCompletedBackups() (*[]Backup, error) {
+	backups, err := GetBackups()
+	if err != nil {
+		return nil, err
+	}
+
+	completedBackups := utils.Filter(*backups, func(b Backup) bool {
+		return b.Completed == true
+	})
+	return &completedBackups, nil
 }
 
 func GetBackups() (*[]Backup, error) {
@@ -105,7 +118,7 @@ func GetBackups() (*[]Backup, error) {
 func getOrCreateMetaFile(flag int, perm os.FileMode) (*os.File, error) {
 	if _, err := os.Stat(_const.AppMetaPath); os.IsNotExist(err) {
 		if err := createMetaFile(); err != nil {
-			return nil, fmt.Errorf("failed to create meta file: %s", err)
+			return nil, fmt.Errorf("failed to create meta file: %w", err)
 		}
 	}
 
@@ -114,7 +127,7 @@ func getOrCreateMetaFile(flag int, perm os.FileMode) (*os.File, error) {
 
 func createMetaFile() error {
 	if err := utils.CreateFile(_const.AppMetaPath); err != nil {
-		return fmt.Errorf("failed to create file %s for meta storage: %s", _const.AppMetaPath, err)
+		return fmt.Errorf("failed to create file `%s` for meta storage: %w", _const.AppMetaPath, err)
 	}
 
 	if err := saveStateToFile(&metaFileStructure{}); err != nil {

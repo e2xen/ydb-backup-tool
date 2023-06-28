@@ -200,7 +200,7 @@ func createBackingStoreFile(filePath string) error {
 	}
 	ddCmd := utils.BuildCommand(ddPath, "if=/dev/zero", "of="+filePath, "bs=1M", "count=256")
 	if err := ddCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create img file: %s", filePath)
+		return fmt.Errorf("failed to create img file `%s`", filePath)
 	}
 
 	return nil

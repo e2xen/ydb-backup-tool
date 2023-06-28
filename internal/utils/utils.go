@@ -14,7 +14,7 @@ import (
 func CreateDirectory(dir string) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			return fmt.Errorf("cannot create the following directory: %s", dir)
+			return fmt.Errorf("cannot create the following directory `%s`", dir)
 		}
 	}
 	return nil
@@ -57,7 +57,7 @@ func GetDirectorySize(path string) (int64, error) {
 	})
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to calculate directory size %s due to %s", path, err)
+		return 0, fmt.Errorf("failed to calculate the size of `%s`: %s", path, err)
 	}
 
 	return totalSize, err
@@ -66,7 +66,7 @@ func GetDirectorySize(path string) (int64, error) {
 func CreateFile(path string) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s", path)
+		return fmt.Errorf("failed to create file `%s`", path)
 	}
 	defer func(f *os.File) {
 		err := f.Close()
@@ -89,15 +89,14 @@ func DeleteFile(path string) error {
 func MoveFilesFromDirToDir(source string, target string) error {
 	entries, err := os.ReadDir(source)
 	if err != nil {
-		return fmt.Errorf("failed to get entries from source dir: %s", entries)
+		return fmt.Errorf("failed to get entries from the dir `%s`", entries)
 	}
 
 	for _, entry := range entries {
 		oldPath := path.Join(source, entry.Name())
 		newPath := path.Join(target, entry.Name())
 		if err := MoveFile(oldPath, newPath); err != nil {
-			log.Printf("Error: %s", err)
-			return fmt.Errorf("failed to move entry from %s to %s", oldPath, newPath)
+			return fmt.Errorf("failed to move entry from `%s` to `%s`", oldPath, newPath)
 		}
 	}
 
@@ -157,7 +156,7 @@ func Sync() error {
 
 	syncCmd := BuildCommand(syncPath)
 	if err := syncCmd.Run(); err != nil {
-		return errors.New("cannot sync synchronize data on the disk with RAM using sync")
+		return errors.New("cannot sync synchronize data on the disk with the main memory using `sync`")
 	}
 
 	return nil
@@ -169,4 +168,22 @@ func IsDebugEnabled() bool {
 		debugFlag = false
 	}
 	return debugFlag
+}
+
+func Map[T, V any](ts []T, fn func(T) V) []V {
+	result := make([]V, len(ts))
+	for i, t := range ts {
+		result[i] = fn(t)
+	}
+	return result
+}
+
+func Filter[T any](ts []T, p func(T) bool) []T {
+	var n []T
+	for _, t := range ts {
+		if p(t) {
+			n = append(n, t)
+		}
+	}
+	return n
 }

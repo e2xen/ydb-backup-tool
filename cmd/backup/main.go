@@ -6,6 +6,7 @@ import (
 	"strings"
 	"ydb-backup-tool/internal/btrfs"
 	comp "ydb-backup-tool/internal/btrfs/compression"
+	dedup "ydb-backup-tool/internal/btrfs/deduplication/duperemove"
 	cmd "ydb-backup-tool/internal/command"
 	_const "ydb-backup-tool/internal/const"
 	"ydb-backup-tool/internal/device"
@@ -14,28 +15,46 @@ import (
 )
 
 var (
-	ydbEndpoint          *string
-	ydbName              *string
-	ydbYcTokenFile       *string
-	ydbIamTokenFile      *string
-	ydbSaKeyFile         *string
-	ydbProfile           *string
-	compressionAlgorithm *string
-	compressionLevel     *uint64
-	compression          *comp.Compression
+	ydbEndpoint             *string
+	ydbName                 *string
+	ydbYcTokenFile          *string
+	ydbIamTokenFile         *string
+	ydbSaKeyFile            *string
+	ydbProfile              *string
+	compressionAlgorithm    *string
+	compressionLevel        *uint64
+	dedupBlockSize          *uint64
+	ydbDumpPath             *string
+	ydbDumpExclude          *string
+	ydbDumpConsistencyLevel *string
+	ydbRestorePath          *string
+	ydbRestoreData          *uint64
+	ydbRestoreIndexes       *uint64
+	compression             *comp.Compression
 )
 
 func init() {
-	ydbEndpoint = flag.String(_const.YdbEndpointArg, "", "YDB endpoint")
-	ydbName = flag.String(_const.YdbNameArg, "", "YDB database name")
-	ydbYcTokenFile = flag.String(_const.YdbYcTokenFileArg, "", "YDB OAuth token file")
-	ydbIamTokenFile = flag.String(_const.YdbIamTokenFileArg, "", "YDB IAM token file")
-	ydbSaKeyFile = flag.String(_const.YdbSaKeyFileArg, "", "YDB Service Account Key file")
-	ydbProfile = flag.String(_const.YdbProfileArg, "", "YDB profile name")
-	compressionAlgorithm = flag.String(_const.CompressionAlgorithmArg, "", "Compression algorithm")
-	compressionLevel = flag.Uint64(_const.CompressionLevelArg, 1, "Compression level")
+	ydbEndpoint = flag.String(_const.YdbEndpointArg, "", "YDB endpoint.")
+	ydbName = flag.String(_const.YdbNameArg, "", "YDB database name.")
+	ydbYcTokenFile = flag.String(_const.YdbYcTokenFileArg, "", "YDB OAuth token file.")
+	ydbIamTokenFile = flag.String(_const.YdbIamTokenFileArg, "", "YDB IAM token file.")
+	ydbSaKeyFile = flag.String(_const.YdbSaKeyFileArg, "", "YDB Service Account Key file.")
+	ydbProfile = flag.String(_const.YdbProfileArg, "", "YDB profile name.")
+	compressionAlgorithm = flag.String(_const.CompressionAlgorithmArg, "zstd", "Compression algorithm. Default is ZSTD.")
+	compressionLevel = flag.Uint64(_const.CompressionLevelArg, 3, "Compression level. Default is 3.")
+	dedupBlockSize = flag.Uint64(_const.DedupBlockSize, 4096, "Block size for reading file extents. Default is 4096 bytes.")
+	ydbDumpPath = flag.String(_const.YdbDumpPath, ".", "Path to the database directory with objects or a path to the table to be dumped.The root database directory is used by default.")
+	ydbDumpExclude = flag.String(_const.YdbDumpExclude, "", "Template (PCRE) to exclude paths from export.")
+	ydbDumpConsistencyLevel = flag.String(_const.YdbDumpConsistencyLevel, "database", "The consistency level. Possible options: database and table. Default is database.")
+	ydbRestorePath = flag.String(_const.YdbRestorePath, ".", "Path to the database directory the data will be imported to. Default is the root directory.")
+	ydbRestoreData = flag.Uint64(_const.YdbRestoreData, 1, "Enables/disables data import, 1 (yes) or 0 (no), defaults to 1.")
+	ydbRestoreIndexes = flag.Uint64(_const.YdbRestoreIndexes, 1, "Enables/disables import of indexes, 1 (yes) or 0 (no), defaults to 1.")
 
-	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB use the metadata service")
+	flag.Bool(_const.YdbUseMetadataCredsArg, false, "YDB use the metadata service.")
+	flag.Bool(_const.YdbDumpSchemeOnly, false, "Dump only the details about the database schema objects, without dumping their data.")
+	flag.Bool(_const.YdbDumpAvoidCopy, false, "Do not create a snapshot before dumping.")
+	flag.Bool(_const.YdbRestoreDryRun, false, "Matching the data schemas in the database and file system without updating the database, 1 (yes) or 0 (no), defaults to 0.")
+
 }
 
 func isArgFlagPassed(name string) bool {
@@ -72,18 +91,15 @@ func parseAndValidateArgs() *cmd.Command {
 
 	var command cmd.Command
 	switch strings.TrimSpace(flag.Arg(0)) {
-	case "list-sizes":
+	case "lss", "list-sizes":
 		command = cmd.ListAllBackupsSizes
 	case "ls", "list":
 		command = cmd.ListAllBackups
 		break
-	case "create-full":
-		command = cmd.CreateFullBackup
-		break
-	case "create-inc":
+	case "cr", "create":
 		command = cmd.CreateIncrementalBackup
 		break
-	case "restore":
+	case "rs", "restore":
 		command = cmd.RestoreFromBackup
 		break
 	default:
@@ -96,10 +112,7 @@ func parseAndValidateArgs() *cmd.Command {
 func main() {
 	command := parseAndValidateArgs()
 
-	// TODO: check if running as sudo
-
 	// TODO: add "--help" option
-	// TODO: add "--debug" option
 
 	backingFilePath := _const.AppBaseDataBackingFilePath
 	// Verify img file exists or create it in case of absence
@@ -143,7 +156,7 @@ func main() {
 	case cmd.ListAllBackups:
 		err := command.ListBackups(mountPoint)
 		if err != nil {
-			log.Panicf("Cannot list backups because of the following error: %v", err)
+			log.Panicf("Cannot list backups: %v", err)
 		}
 		break
 	case cmd.ListAllBackupsSizes:
@@ -151,15 +164,17 @@ func main() {
 		if err != nil {
 			log.Panicf("Cannot list backup sizes: %v", err)
 		}
-	case cmd.CreateFullBackup:
-		ydbParams := initYdbParams()
-		if err := command.CreateFullBackup(mountPoint, ydbParams, compression); err != nil {
-			log.Panicf("Cannot perform full backup: %v", err)
-		}
-		break
 	case cmd.CreateIncrementalBackup:
 		ydbParams := initYdbParams()
-		if err := command.CreateIncrementalBackup(mountPoint, ydbParams, compression); err != nil {
+		dedupParams := &dedup.Params{BlockSize: *dedupBlockSize}
+		ydbDumpParams := &ydb.DumpParams{
+			Path:             *ydbDumpPath,
+			Exclude:          *ydbDumpExclude,
+			ConsistencyLevel: *ydbDumpConsistencyLevel,
+			AvoidCopy:        isArgFlagPassed(_const.YdbDumpAvoidCopy),
+			SchemeOnly:       isArgFlagPassed(_const.YdbDumpSchemeOnly),
+		}
+		if err := command.CreateIncrementalBackup(mountPoint, ydbParams, ydbDumpParams, compression, dedupParams); err != nil {
 			log.Panicf("Cannot perform incremental backup: %v", err)
 		}
 		break
@@ -170,15 +185,21 @@ func main() {
 
 		sourcePath := flag.Arg(1)
 		ydbParams := initYdbParams()
-		if err := command.RestoreFromBackup(mountPoint, ydbParams, sourcePath); err != nil {
+		restoreParams := &ydb.RestoreParams{
+			Path:    *ydbRestorePath,
+			Data:    *ydbRestoreData,
+			Indexes: *ydbRestoreIndexes,
+			DryRun:  isArgFlagPassed(_const.YdbRestoreDryRun),
+		}
+		if err := command.RestoreFromBackup(mountPoint, ydbParams, restoreParams, sourcePath); err != nil {
 			log.Panicf("Cannot restore from the backup: %v", err)
 		}
 		break
 	}
 }
 
-func initYdbParams() *ydb.Params {
-	return &ydb.Params{Endpoint: *ydbEndpoint,
+func initYdbParams() *ydb.YdbParams {
+	return &ydb.YdbParams{Endpoint: *ydbEndpoint,
 		Name:             *ydbName,
 		YcTokenFile:      *ydbYcTokenFile,
 		IamTokenFile:     *ydbIamTokenFile,

@@ -2,10 +2,11 @@ package ydb
 
 import (
 	"fmt"
+	"strconv"
 	"ydb-backup-tool/internal/utils"
 )
 
-type Params struct {
+type YdbParams struct {
 	Endpoint         string
 	Name             string
 	YcTokenFile      string
@@ -15,21 +16,44 @@ type Params struct {
 	UseMetadataCreds bool
 }
 
+type DumpParams struct {
+	Path             string
+	Exclude          string
+	ConsistencyLevel string
+	AvoidCopy        bool
+	SchemeOnly       bool
+}
+
+type RestoreParams struct {
+	Path    string
+	Data    uint64
+	Indexes uint64
+	DryRun  bool
+}
+
 type Backup struct {
 	Path string
 }
 
-func Dump(params *Params, path string) (*Backup, error) {
-	// TODO: add search of binary is user's profile directory if running as sudo
+func Dump(ydbParams *YdbParams, dumpParams *DumpParams, path string) (*Backup, error) {
 	ydbPath, err := utils.GetBinary("ydb")
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: verify YDB connection(for example, discovery whoami). However, discovery works only with token creds
-	args := []string{"-e", params.Endpoint, "-d", params.Name}
-	args = addAuthParams(params, args)
-	args = append(args, "tools", "dump", "-o", path)
+	args := []string{"-e", ydbParams.Endpoint, "-d", ydbParams.Name}
+	args = addAuthParams(ydbParams, args)
+	args = append(args, "tools", "dump", "-o", path, "-p", dumpParams.Path,
+		"--consistency-level", dumpParams.ConsistencyLevel)
+	if dumpParams.Exclude != "" {
+		args = append(args, "--exclude", dumpParams.Exclude)
+	}
+	if dumpParams.AvoidCopy {
+		args = append(args, "--avoid-copy")
+	}
+	if dumpParams.SchemeOnly {
+		args = append(args, "--scheme-only")
+	}
 
 	// Perform full backup of YDB
 	ydbCmd := utils.BuildCommand(ydbPath, args...)
@@ -40,16 +64,20 @@ func Dump(params *Params, path string) (*Backup, error) {
 	return &Backup{Path: path}, nil
 }
 
-func Restore(params *Params, sourcePath string) error {
-	// TODO: add search of binary is user's profile directory if running as sudo
+func Restore(ydbParams *YdbParams, restoreParams *RestoreParams, sourcePath string) error {
 	ydbPath, err := utils.GetBinary("ydb")
 	if err != nil {
 		return err
 	}
 
-	args := []string{"-e", params.Endpoint, "-d", params.Name}
-	args = addAuthParams(params, args)
-	args = append(args, "tools", "restore", "-p", ".", "-i", sourcePath)
+	args := []string{"-e", ydbParams.Endpoint, "-d", ydbParams.Name}
+	args = addAuthParams(ydbParams, args)
+	args = append(args, "tools", "restore", "-p", restoreParams.Path, "-i", sourcePath,
+		"--restore-data", strconv.FormatUint(restoreParams.Data, 10),
+		"--restore-indexes", strconv.FormatUint(restoreParams.Indexes, 10))
+	if restoreParams.DryRun {
+		args = append(args, "--dry-run")
+	}
 
 	// Perform restore of YDB
 	ydbCmd := utils.BuildCommand(ydbPath, args...)
@@ -60,20 +88,20 @@ func Restore(params *Params, sourcePath string) error {
 	return nil
 }
 
-func addAuthParams(params *Params, args []string) []string {
-	if params.YcTokenFile != "" {
-		args = append(args, "--yc-token-file", params.YcTokenFile)
+func addAuthParams(ydbParams *YdbParams, args []string) []string {
+	if ydbParams.YcTokenFile != "" {
+		args = append(args, "--yc-token-file", ydbParams.YcTokenFile)
 	}
-	if params.IamTokenFile != "" {
-		args = append(args, "--iam-token-file", params.IamTokenFile)
+	if ydbParams.IamTokenFile != "" {
+		args = append(args, "--iam-token-file", ydbParams.IamTokenFile)
 	}
-	if params.SaKeyFile != "" {
-		args = append(args, "--sa-key-file", params.SaKeyFile)
+	if ydbParams.SaKeyFile != "" {
+		args = append(args, "--sa-key-file", ydbParams.SaKeyFile)
 	}
-	if params.Profile != "" {
-		args = append(args, "-p", params.Profile)
+	if ydbParams.Profile != "" {
+		args = append(args, "-p", ydbParams.Profile)
 	}
-	if params.UseMetadataCreds {
+	if ydbParams.UseMetadataCreds {
 		args = append(args, "--use-metadata-credentials")
 	}
 	return args

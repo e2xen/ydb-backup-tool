@@ -25,15 +25,18 @@ type Command int64
 const (
 	ListAllBackups Command = iota
 	ListAllBackupsSizes
-	CreateFullBackup
 	CreateIncrementalBackup
 	RestoreFromBackup
 )
 
 func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
+	if err := syncSubvolumesWithMeta(); err != nil {
+		return err
+	}
+
 	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups: %w", err)
 	}
 
 	if err := utils.Sync(); err != nil {
@@ -42,7 +45,7 @@ func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
 
 	metaBackups, err := meta.GetBackups()
 	if err != nil {
-		return fmt.Errorf("failed to get backups meta information: %s", err)
+		return fmt.Errorf("failed to get backups meta information: %w", err)
 	}
 
 	var atLeastOneBackupCompleted bool
@@ -58,7 +61,7 @@ func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
 	} else {
 		subvolumes, err := btrfs.GetSubvolumes(backupsSubvolume.Path)
 		if err != nil {
-			return fmt.Errorf("cannot get list of subvolumes. Error: %w", err)
+			return fmt.Errorf("cannot get list of subvolumes: %w", err)
 		}
 
 		var subvolumesMap = map[string]*btrfs.Subvolume{}
@@ -82,9 +85,13 @@ func (command *Command) ListBackups(mountPoint *device.MountPoint) error {
 }
 
 func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
+	if err := syncSubvolumesWithMeta(); err != nil {
+		return err
+	}
+
 	backupsSubvolume, err := getOrCreateBackupsSubvolume()
 	if err != nil {
-		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
+		return fmt.Errorf("failed to get subvolume with backups: %w", err)
 	}
 
 	if err := utils.Sync(); err != nil {
@@ -93,7 +100,7 @@ func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
 
 	metaBackups, err := meta.GetBackups()
 	if err != nil {
-		return fmt.Errorf("failed to get backups meta information: %s", err)
+		return fmt.Errorf("failed to get backups meta information: %w", err)
 	}
 
 	var atLeastOneBackupCompleted bool
@@ -105,11 +112,11 @@ func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
 	}
 
 	if !atLeastOneBackupCompleted {
-		log.Printf("Currently, there is no backups")
+		log.Printf("Currently, there is no backups\n")
 	} else {
 		metaSubvolumes, err := btrfs.GetSubvolumesMeta(backupsSubvolume.Path)
 		if err != nil {
-			return fmt.Errorf("failed to get meta information about subvolumes. Error: %w", err)
+			return fmt.Errorf("failed to get meta information about subvolumes: %w", err)
 		}
 
 		sort.Slice(*metaSubvolumes, func(i, j int) bool {
@@ -139,54 +146,43 @@ func (command *Command) ListBackupsSizes(mountPoint *device.MountPoint) error {
 	return nil
 }
 
-func (command *Command) CreateFullBackup(
-	mountPoint *device.MountPoint,
-	ydbParams *ydb.Params,
-	compression *comp.Compression) error {
-	backupsSubvolume, err := getOrCreateBackupsSubvolume()
-	if err != nil {
-		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
-	}
-
-	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, compression, targetPath)
-	if err != nil {
-		return fmt.Errorf("cannot perform full backup. Error: %w", err)
-	}
-
-	log.Print("Successfully performed full backup!")
-	log.Print("path: " + subvolume.Path)
-
-	return nil
-}
-
 func (command *Command) CreateIncrementalBackup(
 	mountPoint *device.MountPoint,
-	ydbParams *ydb.Params,
-	compression *comp.Compression) error {
-
-	backupsSubvolume, err := getOrCreateBackupsSubvolume()
-	if err != nil {
-		return fmt.Errorf("failed to get subvolume with backups. Error: %w", err)
-	}
-
-	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
-	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, compression, targetPath)
-	if err != nil {
-		return fmt.Errorf("cannot perform full backup. Error: %w", err)
-	}
-
-	if err := duperemove.DeduplicateDirectory(backupsSubvolume.Path); err != nil {
+	ydbParams *ydb.YdbParams,
+	dumpParams *ydb.DumpParams,
+	compression *comp.Compression,
+	dedupParams *duperemove.Params) error {
+	if err := syncSubvolumesWithMeta(); err != nil {
 		return err
 	}
 
-	log.Print("Successfully performed incremental backup using deduplication!")
-	log.Printf("Path: %s", subvolume.Path)
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
+	if err != nil {
+		return fmt.Errorf("failed to get subvolume with backups: %w", err)
+	}
 
+	targetPath := backupsSubvolume.Path + "/ydb_backup_" + strconv.Itoa(int(time.Now().Unix()))
+	subvolume, err := createFullBackupSubvolume(mountPoint, ydbParams, dumpParams, compression, targetPath)
+	if err != nil {
+		return fmt.Errorf("cannot perform full backup: %w", err)
+	}
+
+	if err := duperemove.DeduplicateDirectory(backupsSubvolume.Path, dedupParams); err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully performed incremental backup!\nPath: %s\n", subvolume.Path)
 	return nil
 }
 
-func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbParams *ydb.Params, sourcePath string) error {
+func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint,
+	ydbParams *ydb.YdbParams,
+	restoreParams *ydb.RestoreParams,
+	sourcePath string) error {
+	if err := syncSubvolumesWithMeta(); err != nil {
+		return err
+	}
+
 	finalSourcePath := strings.TrimSpace(sourcePath)
 	if !strings.HasPrefix(finalSourcePath, "/") {
 		finalSourcePath = "/" + finalSourcePath
@@ -197,24 +193,25 @@ func (command *Command) RestoreFromBackup(mountPoint *device.MountPoint, ydbPara
 
 	subvolumeExists, err := btrfs.VerifySubvolumeExists(finalSourcePath)
 	if err != nil {
-		return fmt.Errorf("cannot obtain info about backup: %s", sourcePath)
+		return fmt.Errorf("cannot obtain info about backup from `%s`", sourcePath)
 	}
 	if !subvolumeExists {
-		return fmt.Errorf("cannot find backup: %s", sourcePath)
+		return fmt.Errorf("cannot find backup `%s`", sourcePath)
 	}
 
-	if err := ydb.Restore(ydbParams, finalSourcePath); err != nil {
+	if err := ydb.Restore(ydbParams, restoreParams, finalSourcePath); err != nil {
 		return fmt.Errorf("failed to restore from the backup `%s`: %w", sourcePath, err)
 	}
 
-	log.Printf("Successfully restored from the backup `%s`!", sourcePath)
+	fmt.Printf("Successfully restored from the backup `%s`!\n", sourcePath)
 
 	return nil
 }
 
 func createFullBackupSubvolume(
 	mountPoint *device.MountPoint,
-	ydbParams *ydb.Params,
+	ydbParams *ydb.YdbParams,
+	dumpParams *ydb.DumpParams,
 	compression *comp.Compression,
 	targetPath string) (*btrfs.Subvolume, error) {
 	if err := utils.CreateDirectory(_const.AppTmpPath); err != nil {
@@ -227,7 +224,7 @@ func createFullBackupSubvolume(
 	}
 	defer func() {
 		if err := utils.DeleteDirectory(tempBackupPath); err != nil {
-			log.Warnf("failed to delete temporary backup directory: %s", tempBackupPath)
+			log.Warnf("failed to delete temporary backup directory `%s`", tempBackupPath)
 		}
 	}()
 
@@ -235,19 +232,19 @@ func createFullBackupSubvolume(
 		return nil, err
 	}
 
-	backup, err := ydb.Dump(ydbParams, tempBackupPath)
+	backup, err := ydb.Dump(ydbParams, dumpParams, tempBackupPath)
 	if err != nil {
-		return nil, fmt.Errorf("error occurred during YDB backup process: %s", err)
+		return nil, fmt.Errorf("error occurred during YDB backup process: %w", err)
 	}
 
 	backupSize, err := utils.GetDirectorySize(backup.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get size of `%s`: %s", backup.Path, err)
+		return nil, fmt.Errorf("failed to get size of `%s`: %w", backup.Path, err)
 	}
 
 	metaSize, err := btrfs.GetFileSystemUsage(mountPoint.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get btrfs usage info: %s", err)
+		return nil, fmt.Errorf("failed to get btrfs usage info: %w", err)
 	}
 
 	// Also, we should have 16Kib of free space to store subvolume metadata
@@ -255,12 +252,27 @@ func createFullBackupSubvolume(
 	sizeDiff := btrfsFreeSpace - backupSize
 	if sizeDiff < 0 {
 		// Extend backing file size
-		extendBy := _math.Abs(sizeDiff)
-		if err := device.ExtendBackingStoreFileBy(&mountPoint.LoopDev.BackFile, _math.Abs(extendBy)); err != nil {
+		extendBy := 2 * _math.Abs(sizeDiff)
 
-			return nil, fmt.Errorf("failed to extend backing store file: %s", err)
+		if err := device.DetachLoopDevice(&mountPoint.LoopDev); err != nil {
+			return nil, fmt.Errorf("failed to detach loop device %s", mountPoint.LoopDev.Name)
+		}
+		if err := device.Unmount(mountPoint); err != nil {
+			return nil, fmt.Errorf("failed to unmount %s", mountPoint.Path)
+		}
+		if err := device.ExtendBackingStoreFileBy(&mountPoint.LoopDev.BackFile, _math.Abs(extendBy)); err != nil {
+			return nil, fmt.Errorf("failed to extend backing store file: %w", err)
 		}
 
+		newLoopDev, err := device.SetupLoopDevice(&mountPoint.LoopDev.BackFile)
+		if err != nil {
+			log.Panicf("Cannot create a new loop device. %v", err)
+		}
+		newMountPoint, err := device.MountLoopDevice(newLoopDev, mountPoint.Path, compression)
+		if err != nil {
+			return nil, fmt.Errorf("failed to mount %s", mountPoint.Path)
+		}
+		mountPoint = newMountPoint
 		if err := btrfs.ResizeFileSystem(mountPoint.Path, "max"); err != nil {
 			return nil, err
 		}
@@ -290,7 +302,7 @@ func createFullBackupSubvolume(
 func getOrCreateBackupsSubvolume() (*btrfs.Subvolume, error) {
 	subvolume, err := btrfs.GetSubvolume(_const.AppBackupsPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot obtain info to verify that subvolume with backup exists. Error: %w", err)
+		return nil, fmt.Errorf("cannot obtain info to verify that subvolume with backups exists: %w", err)
 	}
 
 	if subvolume == nil {
@@ -302,4 +314,38 @@ func getOrCreateBackupsSubvolume() (*btrfs.Subvolume, error) {
 	}
 
 	return subvolume, nil
+}
+
+func syncSubvolumesWithMeta() error {
+	backupsSubvolume, err := getOrCreateBackupsSubvolume()
+	if err != nil {
+		return fmt.Errorf("failed to get subvolume with backups: %w", err)
+	}
+
+	subvolumes, err := btrfs.GetSubvolumes(backupsSubvolume.Path)
+	if err != nil {
+		return err
+	}
+
+	metaBackups, err := meta.GetCompletedBackups()
+	if err != nil {
+		return err
+	}
+	metaBackupsPaths := utils.Map(*metaBackups, func(b meta.Backup) string { return b.Path })
+	metaBackupsSet := make(map[string]bool)
+	for _, backupPath := range metaBackupsPaths {
+		metaBackupsSet[backupPath] = true
+	}
+
+	for _, subvolume := range subvolumes {
+		if exists := metaBackupsSet[subvolume.Path]; !exists {
+			log.Warnf("Deleting non-completed backup or an unknown subvolume `%s`", subvolume.Name)
+
+			if err := btrfs.DeleteSubvolume(subvolume); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

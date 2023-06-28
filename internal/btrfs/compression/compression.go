@@ -60,7 +60,7 @@ func CreateCompression(algorithm Algorithm, compressionLevel uint64) (Compressio
 
 func EnableCompression(path string, compression Compression) error {
 	if err := btrfs.SetProperty(path, "compression", string(compression.Algorithm())); err != nil {
-		return fmt.Errorf("failed to enable compression for the given path %s: %s", path, err)
+		return fmt.Errorf("failed to enable compression for the given path `%s`: %s", path, err)
 	}
 
 	return nil
